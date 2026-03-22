@@ -96,6 +96,10 @@ summary:
   # External prompt file (takes precedence over inline prompt)
   summary_prompt_file: ""            # e.g., "./prompts/summary-prompt.md"
   max_tokens: 2000
+  keywords:
+    enabled: true                    # Enable LLM keyword extraction (default: true)
+    language: "zh-Hant"              # Keyword language (default: en)
+    count: 10                        # Max number of keywords
 
 # Channel list
 channels:
@@ -156,11 +160,20 @@ The `title` field is formatted as `YYYY-MM-DD Video Title (type)`:
 - transcription.md → `"2026-03-20 Video Title (transcription)"`
 - summary.md → `"2026-03-20 Video Title (summary)"`
 
-**summary.md** includes two additional fields:
+**summary.md** includes additional fields:
 ```yaml
+keywords: ["AI", "機器學習"]         # LLM-generated keywords ([] if extraction failed)
 llm_provider: "ollama"
 llm_model: "llama3"
 ```
+
+**Tags and keywords in Obsidian mode (`obsidian.enabled: true`):**
+- `tags` is enriched: YouTube original tags + `auto_tags` + channel name + `keywords` (all merged)
+- `keywords` field is always kept separately for programmatic access (e.g., Claude Code)
+
+**Tags and keywords in non-Obsidian mode:**
+- `tags`: YouTube original tags only
+- `keywords`: LLM-generated keywords only
 
 ### Obsidian Integration
 
@@ -274,6 +287,32 @@ Glob for `*__{video_id}__*` pattern in the channel's output directory. If a matc
 │                              └──────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Two-Stage LLM Call
+
+Summary generation uses two sequential LLM calls:
+
+```
+Stage 1: Generate Summary
+    Input:  transcript text (via prompt template)
+    Output: summary text (free-form markdown)
+    Fail:   skip summary.md entirely, log error
+         ↓
+Stage 2: Extract Keywords (if summary.keywords.enabled)
+    Input:  summary text from Stage 1
+    Prompt: auto-generated based on keywords.language and keywords.count
+            e.g., "請用繁體中文從以下摘要中列出最多 10 個關鍵字，每行一個："
+    Output: one keyword per line → parse into list
+    Fail:   keywords: [] in frontmatter, flow continues normally
+         ↓
+Program assembles final summary.md:
+    frontmatter (metadata + keywords) + summary text from Stage 1
+```
+
+- Stage 2 uses the **same LLM provider** as Stage 1
+- Stage 2 input is the short summary (not the full transcript), so it is fast and cheap
+- Stage 2 failure is non-blocking — `keywords` defaults to `[]`
+- Keyword parsing: split response by newlines, trim whitespace and bullet markers, discard empty lines
 
 ### Whisper Transcription Branch
 
