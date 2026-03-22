@@ -91,13 +91,17 @@ llm:
 
 # Summary settings
 summary:
+  # Inline prompt (for simple prompts)
   prompt: "Please summarize the following video content in Traditional Chinese with key points..."
+  # External prompt file (takes precedence over inline prompt)
+  summary_prompt_file: ""            # e.g., "./prompts/summary-prompt.md"
   max_tokens: 2000
 
 # Channel list
 channels:
   - url: "https://www.youtube.com/@channel-a"
     count: 10                        # Override default_count
+    summary_prompt_file: "./prompts/tech-summary.md"  # Per-channel override
   - url: "https://www.youtube.com/@channel-b"
   - url: "https://www.youtube.com/@channel-c"
 ```
@@ -190,6 +194,46 @@ obsidian:
    ```
    ```
    The MOC is regenerated on each `ytss run` to include new videos.
+
+### Summary Prompt Template
+
+Prompt resolution order:
+1. Per-channel `summary_prompt_file` (if set)
+2. Global `summary.summary_prompt_file` (if set)
+3. Global `summary.prompt` (inline)
+
+External prompt files support variable substitution using `{{variable}}` syntax:
+
+| Variable | Description |
+|----------|-------------|
+| `{{title}}` | Video title |
+| `{{channel_name}}` | Channel display name |
+| `{{language}}` | Detected language code |
+| `{{upload_date}}` | Upload date (YYYY-MM-DD) |
+| `{{duration}}` | Video duration |
+| `{{tags}}` | Comma-separated tags |
+| `{{transcript}}` | Full transcript text |
+
+Example prompt file (`prompts/summary-prompt.md`):
+```markdown
+You are a professional video content summarizer.
+
+## Video Info
+- Title: {{title}}
+- Channel: {{channel_name}}
+- Language: {{language}}
+- Date: {{upload_date}}
+
+## Instructions
+1. Write in Traditional Chinese
+2. Include: topic overview (2-3 sentences), key points (5-10 items), conclusion
+3. Preserve technical terms in original language
+
+## Transcript
+{{transcript}}
+```
+
+For inline `summary.prompt`, the transcript is automatically appended after the prompt text. Variable substitution is not available in inline mode.
 
 ### Skip Detection
 
