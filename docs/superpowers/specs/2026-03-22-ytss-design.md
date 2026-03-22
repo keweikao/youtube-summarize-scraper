@@ -133,7 +133,7 @@ Both `transcription.md` and `summary.md` start with a YAML frontmatter block. Al
 **transcription.md:**
 ```yaml
 ---
-title: "2026-03-20 Video Title"
+title: "2026-03-20 Video Title (transcription)"
 video_id: "dQw4w9WgXcQ"
 url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 channel: "@channel-a"
@@ -148,7 +148,9 @@ processed_at: "2026-03-22T15:30:00+08:00"
 ---
 ```
 
-The `title` field is formatted as `YYYY-MM-DD Video Title` (upload date + original title).
+The `title` field is formatted as `YYYY-MM-DD Video Title (type)`:
+- transcription.md → `"2026-03-20 Video Title (transcription)"`
+- summary.md → `"2026-03-20 Video Title (summary)"`
 
 **summary.md** includes two additional fields:
 ```yaml
