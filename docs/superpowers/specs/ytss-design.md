@@ -129,11 +129,25 @@ channels:
   - url: "https://www.youtube.com/@channel-a"
     count: 10                        # Override default_count
     summary_prompt_file: "./prompts/tech-summary.md"  # Per-channel override
+    cookie:                          # Per-channel cookie (optional, overrides global)
+      browser: "chrome"
+      chrome_profile: "Profile 2"
     filter:                          # Per-channel filter override
       types: ["video"]               # This channel: videos only
       min_duration: 60
   - url: "https://www.youtube.com/@channel-b"
   - url: "https://www.youtube.com/@channel-c"
+
+# Playlist list
+playlists:
+  - url: "https://www.youtube.com/playlist?list=WL"
+    name: "稍後觀看"              # Display name (optional, auto-detected from yt-dlp)
+    count: 10                     # Max videos to process (optional, default: default_count)
+    summary_prompt_file: ""       # Per-playlist prompt override (optional)
+    cookie:                       # Per-playlist cookie (optional, overrides global)
+      browser: "chrome"
+      chrome_profile: "Profile 1"
+  - url: "https://www.youtube.com/playlist?list=PLxxxxx"
 ```
 
 ## Output Structure
@@ -283,15 +297,63 @@ This approach avoids fetching full metadata for already-processed videos, reduci
 
 **Note:** `--flat-playlist` returns `duration` as float (e.g., `1434.0`) and does not include `live_status`, `upload_date`, `tags`, `channel`, or `media_type`. These fields are populated in Phase 2 via full metadata fetch.
 
+### Playlist Processing
+
+Playlists are processed before channels in `ytss run`. Each playlist uses `yt-dlp --flat-playlist` for listing, then on-demand full metadata fetch for new videos (same two-phase approach as channels).
+
+**Output directory:** `_playlist__{playlist_id}__{sanitized_name}/`
+- Example: `_playlist__WL__稍後觀看/`, `_playlist__PLxxxxx__My_Favorites/`
+- Uses double-underscore separator matching video directory naming convention
+
+**Frontmatter additions** (both transcription.md and summary.md):
+- `playlist: "稍後觀看"` — playlist name (empty for channel videos)
+- `playlist_id: "WL"` — playlist ID (empty for channel videos)
+- `channel` and `channel_name` still reflect the video's original channel
+
+**Processing flow:**
+1. `yt-dlp --flat-playlist --dump-json <playlist_url>` (with cookie if configured)
+2. Apply duration filter (min/max)
+3. Take first N videos (playlist order preserved)
+4. Per video: global skip check → fetch full metadata → ProcessVideo
+5. Random delay between playlists (batch settings)
+
+**Skip detection:** See "Skip Detection" section below. A video processed via channel will be copied (not re-processed) to the playlist directory, and vice versa.
+
+**Playlist name resolution:** If `name` is not set in config, it is auto-detected from yt-dlp metadata (`playlist_title` field).
+
 ### Skip Detection
 
-**Global skip detection** (`IsProcessedGlobal`): Glob for `outputDir/*/**/*__{video_id}__*` across all channel directories. This is channel-agnostic, allowing skip checks without knowing the channel handle (which is unavailable in flat-playlist mode).
+**Process for each video:**
 
-**Per-channel skip detection** (`IsProcessed`): Glob for `*__{video_id}__*` within a specific channel directory. Used by `ytss video` command.
+1. `FindVideoDir(outputDir, videoID)` — search for existing `*__videoID__*` directory across all channel and playlist directories.
 
-Both methods are resilient to title changes or sanitization logic updates (they match on video ID only).
+2. **If found (existing directory exists):**
+   - **Same directory** (source == target):
+     - Has `summary.md` → **skip** (fully complete)
+     - No `summary.md` → **resume** (read existing transcription, only generate summary)
+   - **Cross-directory** (source ≠ target, e.g., channel → playlist or playlist → playlist):
+     - Source has `summary.md` → **copy** all files to target directory, update frontmatter (`playlist`, `playlist_id`, `channel` fields), then skip
+     - Source has no `summary.md` → treat as **new video** (don't copy incomplete data)
 
-When `--force` flag is set, skip detection is bypassed and existing output is overwritten.
+3. **If not found** → **new video**, full pipeline processing.
+
+**Cross-directory copy details:**
+- All files (subtitle.srt, transcription.md, summary.md) are copied to the target directory
+- Frontmatter in transcription.md and summary.md is updated to reflect the target context:
+  - Copying to playlist: set `playlist` and `playlist_id`
+  - Copying to channel: clear `playlist` and `playlist_id`
+- File names are preserved (same prefix format)
+- `processed_at` is updated to the copy timestamp
+
+**Helper functions:**
+- `FindVideoDir(outputDir, videoID)` — glob `outputDir/*/**/*__videoID__*`, returns first match or ""
+- `HasFile(videoDir, suffix)` — check if `*__suffix` exists in dir
+- `IsProcessed(outputDir, channelHandle, videoID)` — per-channel check with summary.md (used by `ytss video`)
+- `IsProcessedGlobal(outputDir, videoID)` — global check with summary.md
+
+All methods match on video ID only, resilient to title changes or sanitization logic updates.
+
+When `--force` flag is set, skip detection is bypassed and existing output is overwritten (no copy).
 
 ## Core Pipeline
 
@@ -687,6 +749,12 @@ Fetch metadata (yt-dlp --dump-json, no cookie)
    └─ No cookie? → log warning "cookie required", skip
 ```
 
+**Cookie priority (per request):**
+1. **Per-source cookie** (playlist/channel level `cookie` config) — if set, use directly without attempting no-cookie first
+2. **No-cookie attempt** — if no per-source cookie is configured, try without cookie
+3. **Global cookie retry** — if step 2 fails and global `cookie` is configured, retry with global cookie
+4. **Error** — log warning and skip the video/playlist
+
 Key improvements:
 - **Pre-detect restricted videos** via `availability` metadata field before attempting download
 - **Chrome multi-profile support**: When `browser: chrome`, try profiles in order: `chrome_profile` (if set) → `Default` → `Profile 1`, `Profile 2`, etc.
@@ -790,6 +858,12 @@ Videos are processed **sequentially, one at a time**. Whisper transcription is C
 **Batch settings** (`batch` config section):
 - `random_order: true` — shuffles channel processing order each run to avoid predictable patterns and ensure fair processing
 - `delay_min` / `delay_max` — random delay (in seconds) between channels to reduce request frequency. Delay is `rand(min, max)` seconds, applied after each channel except the last.
+
+**Processing order in `ytss run`:**
+1. Playlists (in order, or shuffled if `batch.random_order`)
+2. Channels (in order, or shuffled if `batch.random_order`)
+
+Playlists and channels are shuffled independently within their groups.
 
 ### Timeouts
 
