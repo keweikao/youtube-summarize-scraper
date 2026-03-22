@@ -1,0 +1,23 @@
+# Build artifacts
+ytss
+*.exe
+dist/
+
+# Embedded binaries (downloaded per-platform during build)
+embedded/bin/
+
+# Output directory
+output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
