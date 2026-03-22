@@ -22,7 +22,7 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 
 ```
 --config, -c       Config file path (default: ./config.yaml)
---output, -o       Output directory (default: ./output, overridable in config)
+--output, -o       Output directory (default: ./ytss-output, overridable in config)
 --llm              Override LLM backend (ollama / llamacpp / claude-api / gemini-cli)
 --cookie-file      Path to cookie.txt (Netscape format)
 --cookie-browser   Auto-extract cookie from browser (chrome / firefox / safari / edge / brave)
@@ -33,13 +33,13 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 
 `ytss video` and `ytss channel` work standalone without config.yaml (using defaults). When no config exists, the default LLM provider is `ollama` at `localhost:11434`. If the LLM is unreachable, subtitle and transcription are still produced; only the summary step is skipped with a warning.
 
-**Output directory for `ytss video` and `ytss channel`:** The channel name is auto-detected from video/channel metadata (`yt-dlp --dump-json` → `channel` field). Output follows the same structure as `ytss run`: `output/@channel-name/YYYY-MM-DD__id__title/`.
+**Output directory for `ytss video` and `ytss channel`:** Output follows the same structure as `ytss run`: `ytss-output/@channel-handle/YYYY-MM-DD__id__title/`. Channel handle is derived from yt-dlp's `uploader_id` field (e.g., `@HighYield`).
 
 ## Config File
 
 ```yaml
 # Output
-output_dir: "./output"
+output_dir: "./ytss-output"
 
 # Subtitle language preferences (optional, supports regex via yt-dlp)
 # If unset: detect video original language → fallback to English
@@ -55,7 +55,7 @@ default_count: 5
 # Whisper settings
 whisper:
   model_dir: "~/.ytss/models"
-  default_model: "base"              # Fallback model for unmatched languages
+  default_model: "medium"             # Fallback model for unmatched languages
 
   language_models:                   # Language-specific model overrides (ISO 639-1 keys)
     ja: "kotoba-ja"                  # Japanese-specialized (kotoba-tech, 1.4GB)
@@ -85,6 +85,8 @@ llm:
   ollama:
     model: "llama3"
     endpoint: "http://localhost:11434"
+    think: false                     # Enable thinking mode (better quality, slower, more tokens)
+    timeout: 900                     # Seconds per LLM request (default: 900 = 15min)
   llamacpp:
     endpoint: "http://localhost:8080"
   claude_api:
@@ -137,7 +139,7 @@ channels:
 ## Output Structure
 
 ```
-output/
+ytss-output/
 ├── @channel-a/
 │   ├── 2026-03-20__dQw4w9WgXcQ__Rick_Astley_Never_Gonna_Give_You_Up/
 │   │   ├── 2026-03-20__dQw4w9WgXcQ__subtitle.srt
@@ -155,7 +157,7 @@ output/
 - Files: `YYYY-MM-DD__{video_id}__{type}.{ext}`
 - Date: video upload date
 - Sanitized title: special characters and spaces removed, length limited
-- `transcription.md`: subtitle content with SRT formatting stripped, plain text only
+- `transcription.md`: subtitle content with SRT formatting stripped, plain text only. YouTube auto-generated subtitles use a rolling format where each sentence appears in 2-3 consecutive SRT blocks. `SRTToText` deduplicates consecutive identical lines after stripping timestamps.
 - `summary.md` and `transcription.md` include a YAML frontmatter header with video metadata
 
 ### Frontmatter
@@ -309,6 +311,8 @@ When `--force` flag is set, skip detection is bypassed and existing output is ov
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+**Important:** In `ProcessVideo`, full metadata is fetched first (Step 1), then channel handle is derived (Step 2). This ensures `ytss video` commands have complete metadata before any processing begins.
+
 ### Three-Stage LLM Call
 
 Summary generation uses three sequential LLM calls. The input for Stage 1 is the **transcription** (plain text from transcription.md, not the raw SRT subtitle).
@@ -346,6 +350,7 @@ Program assembles final summary.md:
 - Stage 3 output is validated for Mermaid syntax before inclusion
 - Stage 3 prompt language follows `summary.language` (same as Stage 1)
 - Keyword parsing: split response by newlines, trim whitespace and bullet markers, discard empty lines
+- **Thinking model compatibility**: Some models (e.g., Qwen3.5) wrap responses in `<think>...</think>` tags. All LLM backend responses are passed through `StripThinkingTags()` which removes `<think>`, `<thinking>`, and `<reflection>` XML blocks. The `ollama.think` config controls whether thinking mode is enabled (default: false). When enabled, `num_predict` is automatically multiplied by 4x to accommodate both thinking and response tokens.
 
 ### Built-in Prompt Templates
 
@@ -441,7 +446,7 @@ You are a professional video content analyst. Based on the video information and
 
 This video transcription contains {{transcription_length}} characters. Adjust the detail level based on content richness, but meet these minimum requirements:
 
-| Transcription length | Min overview | Min sections | Min details per section | Min key points |
+| Transcription length | Min overview | Min sections | Min points per section | Min key points |
 |---------------------|-------------|-------------|----------------------|---------------|
 | < 1,000 chars | 2 sentences | 2 sections | 2 items | 3 points |
 | 1,000-5,000 chars | 4 sentences | 3 sections | 2 items | 5 points |
@@ -461,17 +466,19 @@ Briefly describe the video's topic, target audience, and core conclusion or thes
 Divide the content into sections by topic shift. Each section:
 
 #### [Section Title]
-- **Main content**: What this section discusses (2-3 sentences)
-- **Key details**: Specific data, examples, or arguments (bulleted list)
+List the key points and factual details in narrative or logical order.
+Each point should include enough context for a reader to understand the progression without watching the video.
+Use nested lists to express subordination or causal relationships.
 
 For linear content (e.g., tutorials), use chronological sections.
 For multi-topic content (e.g., news roundups), use thematic sections.
 
 ### Key Takeaways
-List the most important points from the video:
-- One sentence per point
+Organize the most important points using hierarchical lists:
+- Group by theme or category, each group with a **bold heading**
+  - List key facts or conclusions under each theme
 - Prioritize actionable or novel information
-- List action items first if present
+- If the video contains action items, list them as a separate group
 
 ## Guidelines
 - Preserve technical terms, proper nouns, product names, and person names in their original language
@@ -502,7 +509,7 @@ File: `prompts/builtin/summary-ja.md`
 
 本動画の書き起こしは {{transcription_length}} 文字です。内容の豊富さに応じて各セクションの量と詳細度を自由に調整してください。ただし、以下の最低要件を満たすこと：
 
-| 書き起こし文字数 | 概要最低 | セクション最低 | 各セクション詳細最低 | 要点最低 |
+| 書き起こし文字数 | 概要最低 | セクション最低 | 各セクション要点最低 | 要点最低 |
 |---------------|---------|-------------|------------------|---------|
 | < 500 文字 | 2 文 | 2 セクション | 2 項目 | 3 個 |
 | 500-3,000 文字 | 4 文 | 3 セクション | 2 項目 | 5 個 |
@@ -522,17 +529,19 @@ File: `prompts/builtin/summary-ja.md`
 内容をテーマの転換点でセクションに分けてください。各セクションの形式：
 
 #### [セクションタイトル]
-- **主な内容**：このセクションで議論されていること（2-3 文）
-- **重要な詳細**：具体的なデータ、事例、論点（箇条書き）
+叙述順序または論理的順序に従い、箇条書きで要点と事実の詳細を整理してください。
+各要点には十分な文脈を含め、動画を視聴しなくても前後関係が理解できるようにしてください。
+階層リストを使用して、従属関係や因果関係を表現できます。
 
 線形的な内容（チュートリアルなど）は時系列で分割。
 複数トピック（ニュースまとめなど）はテーマ別に分割。
 
 ### 重要ポイント
-動画で最も重要なポイントをリストアップ：
-- 各ポイントを一文で要約
+階層リストを使用して、動画の最も重要なポイントを整理：
+- テーマまたはカテゴリでグループ化し、各グループに**太字の見出し**を付ける
+  - 各テーマの重要な事実や結論を下に記載
 - 実用的価値や新規性のある情報を優先
-- アクションアイテムがあれば優先的にリストアップ
+- アクションアイテムがあれば独立したグループとしてリストアップ
 
 ## 注意事項
 - 専門用語、固有名詞、人名、製品名は原語を保持し、翻訳の横に括弧で表記
@@ -567,12 +576,22 @@ Not customizable. The program generates the prompt:
 1. Download audio via `yt-dlp` in WAV 16kHz format (`-x --audio-format wav --postprocessor-args "-ar 16000"`) — whisper.cpp requires this format
 2. Select whisper model: `language_models[lang]` → `default_model` fallback. Language codes are normalized to ISO 639-1 prefix for lookup (e.g., `zh-Hant` → `zh`)
 3. Auto-download model if not present (using `model_sources` URLs)
-4. Transcribe with `whisper.cpp`
+4. Transcribe with `whisper.cpp`. whisper-cli is invoked with `-l <lang>` when the language is known, or `-l auto` when unknown, for better transcription accuracy.
 5. Delete audio file after transcription, keep only subtitle output
 
-### Language Detection
+### Language Detection (4-tier Fallback)
 
-When `preferred_languages` is not set, the video's original language is detected via `yt-dlp --dump-json` metadata field (`language` or `original_language`). If the field is absent or null, fall back to English (`en`).
+When the video language needs to be determined (for whisper model selection or when `preferred_languages` is not set):
+
+1. **yt-dlp `language` field** — from `--dump-json` metadata. Not always set by uploaders.
+2. **Subtitle language** — (reserved) from the first available subtitle.
+3. **Title + description text analysis** — Unicode character range detection:
+   - CJK Ideographs (U+4E00-U+9FFF) > 30% → `zh`
+   - Hiragana (U+3040-U+309F) or Katakana (U+30A0-U+30FF) > 10% → `ja`
+   - Hangul (U+AC00-U+D7AF) > 30% → `ko`
+4. **Unknown** → whisper auto-detect (`-l auto` flag)
+
+This fallback is applied in `pipeline.resolveVideoLanguage()` before subtitle download and whisper transcription.
 
 ### Subtitle Download Strategy (Detailed)
 
@@ -668,7 +687,7 @@ ytss/
 ├── config/
 │   └── config.go            # YAML config parsing
 ├── fetcher/
-│   └── fetcher.go           # yt-dlp: channel video list & metadata
+│   └── fetcher.go           # yt-dlp: channel video list & metadata. VideoMeta includes Description field (mapped to yt-dlp's `description` JSON field), used for language detection
 ├── subtitle/
 │   └── subtitle.go          # Subtitle download, language strategy, SRT → plain text
 ├── transcriber/
@@ -757,7 +776,7 @@ Videos are processed **sequentially, one at a time**. Whisper transcription is C
 | `yt-dlp` metadata/subtitle fetch | 60s |
 | `yt-dlp` audio download | 10min |
 | `whisper.cpp` transcription | 30min |
-| LLM summarization call | 5min |
+| LLM summarization call | Configurable via `ollama.timeout` (default: 15min) |
 
 ### Error Strategy
 
