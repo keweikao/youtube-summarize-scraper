@@ -20,6 +20,7 @@ type ollamaRequest struct {
 	Model   string        `json:"model"`
 	Prompt  string        `json:"prompt"`
 	Stream  bool          `json:"stream"`
+	Think   *bool         `json:"think,omitempty"`
 	Options ollamaOptions `json:"options"`
 }
 
@@ -39,10 +40,17 @@ func (o *OllamaSummarizer) Summarize(text string, opts SummarizeOptions) (string
 
 	combinedPrompt := resolvePrompt(text, opts)
 
+	// Disable thinking mode so that num_predict budget is fully allocated
+	// to the actual response. Without this, thinking models (e.g., Qwen3.5)
+	// consume the entire num_predict budget on internal reasoning, leaving
+	// the response empty.
+	thinkFalse := false
+
 	reqBody := ollamaRequest{
 		Model:  model,
 		Prompt: combinedPrompt,
 		Stream: false,
+		Think:  &thinkFalse,
 		Options: ollamaOptions{
 			NumPredict: opts.MaxTokens,
 		},
@@ -83,5 +91,5 @@ func (o *OllamaSummarizer) Summarize(text string, opts SummarizeOptions) (string
 		return "", fmt.Errorf("ollama: parse response: %w", err)
 	}
 
-	return result.Response, nil
+	return StripThinkingTags(result.Response), nil
 }

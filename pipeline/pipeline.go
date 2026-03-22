@@ -354,6 +354,10 @@ func (p *Pipeline) runSummarization(
 	if err != nil {
 		return fmt.Errorf("stage 1 summarization: %w", err)
 	}
+	if strings.TrimSpace(summaryText) == "" {
+		return fmt.Errorf("stage 1: LLM returned empty response — if using a thinking model (e.g., Qwen3.5), ensure think mode is disabled or increase max_tokens")
+	}
+	slog.Debug("stage 1 complete", "video_id", meta.ID, "response_length", len(summaryText))
 
 	// Stage 2: Keywords (non-blocking).
 	var keywords []string

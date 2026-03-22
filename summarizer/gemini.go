@@ -47,5 +47,5 @@ func (g *GeminiCLISummarizer) Summarize(text string, opts SummarizeOptions) (str
 		return "", fmt.Errorf("gemini-cli: execution failed: %w\nstderr: %s", err, stderr.String())
 	}
 
-	return strings.TrimSpace(stdout.String()), nil
+	return StripThinkingTags(strings.TrimSpace(stdout.String())), nil
 }

@@ -97,5 +97,5 @@ func (c *ClaudeSummarizer) Summarize(text string, opts SummarizeOptions) (string
 		return "", fmt.Errorf("claude: empty response content")
 	}
 
-	return result.Content[0].Text, nil
+	return StripThinkingTags(result.Content[0].Text), nil
 }

@@ -1,0 +1,96 @@
+# YTSS (YouTube Summarize Scraper) Configuration
+
+# Output directory
+output_dir: "./output"
+
+# Subtitle language preferences (optional, supports regex via yt-dlp)
+# If unset: detect video original language → fallback to English
+# Note: YouTube requires zh-Hant/zh-Hans, not bare "zh"
+preferred_languages:
+  - ja
+  - "zh-Hant,zh-Hans"
+  - en
+
+# Default video count per channel
+default_count: 5
+
+# Whisper settings
+whisper:
+  model_dir: "~/.ytss/models"
+  default_model: "base"
+
+  # Language-specific model overrides (ISO 639-1 keys)
+  language_models:
+    ja: "kotoba-ja"                  # Japanese-specialized (kotoba-tech, 1.4GB)
+    zh: "belle-zh"                   # Chinese-specialized (BELLE-2, 1.5GB)
+    en: "medium"
+
+  # Model download URLs (optional, defaults to HuggingFace)
+  model_sources:
+    tiny: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+    base: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+    small: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+    medium: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+    large-v3: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+    large-v3-turbo: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+    belle-zh: "https://huggingface.co/BELLE-2/Belle-whisper-large-v3-turbo-zh-ggml/resolve/main/ggml-model.bin"
+    kotoba-ja: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-model.bin"
+    kotoba-ja-q5: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-model-q5.bin"
+
+# Cookie settings (optional)
+cookie:
+  file: ""                           # Path to cookie.txt (Netscape format)
+  browser: "chrome"                  # chrome / firefox / safari / edge / brave
+  chrome_profile: ""                 # Chrome profile name (e.g., "Default", "Profile 1")
+
+# LLM settings
+llm:
+  provider: "ollama"                 # ollama / llamacpp / claude-api / gemini-cli
+  ollama:
+    model: "qwen3.5:27b"
+    endpoint: "http://localhost:11434"
+  llamacpp:
+    endpoint: "http://localhost:8080"
+  claude_api:
+    api_key: "${CLAUDE_API_KEY}"
+    model: "claude-sonnet-4-20250514"
+  gemini_cli:
+    model: "gemini-2.5-pro"
+    path: ""                         # Path to gemini binary (default: search in PATH)
+
+# Summary settings
+summary:
+  language: "zh-Hant"                # Selects built-in prompt language (en / zh-Hant / ja)
+  prompt: ""                         # Inline prompt (overrides built-in)
+  summary_prompt_file: ""            # External prompt file (overrides inline and built-in)
+  max_tokens: 2000
+  keywords:
+    enabled: true
+    language: "zh-Hant"              # Keyword language
+    count: 10
+  mermaid:
+    enabled: true
+
+# Video filter settings
+filter:
+  types: ["video", "live", "short"]  # video / live / short (default: all types)
+  min_duration: 0                    # Min seconds (0 = no filter)
+  max_duration: 0                    # Max seconds (0 = no limit)
+
+# Obsidian integration (optional)
+obsidian:
+  enabled: false
+  auto_tags: ["youtube"]
+  generate_moc: true
+  wikilinks: true
+
+# Channel list
+channels:
+  - url: "https://www.youtube.com/@channel-a"
+    count: 10                        # Override default_count
+    # summary_prompt_file: "./prompts/tech-summary.md"  # Per-channel prompt
+    # filter:
+    #   types: ["video"]
+    #   min_duration: 60
+  - url: "https://www.youtube.com/@channel-b"
+  - url: "https://www.youtube.com/@channel-c"

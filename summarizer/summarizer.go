@@ -2,6 +2,8 @@ package summarizer
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/kouko/youtube-summarize-scraper/config"
 )
@@ -51,4 +53,15 @@ func resolvePrompt(text string, opts SummarizeOptions) string {
 		return opts.Prompt
 	}
 	return text
+}
+
+// thinkingTagRe matches thinking-related XML blocks (including multiline).
+// Covers: <think>, <thinking>, <reflection> and their closing tags.
+var thinkingTagRe = regexp.MustCompile(`(?s)<(?:think|thinking|reflection)>.*?</(?:think|thinking|reflection)>`)
+
+// StripThinkingTags removes <think>...</think> blocks from LLM responses.
+// Some models (e.g., Qwen3.5) output thinking traces wrapped in these tags.
+func StripThinkingTags(response string) string {
+	result := thinkingTagRe.ReplaceAllString(response, "")
+	return strings.TrimSpace(result)
 }

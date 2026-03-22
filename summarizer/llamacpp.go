@@ -69,5 +69,5 @@ func (l *LlamaCppSummarizer) Summarize(text string, opts SummarizeOptions) (stri
 		return "", fmt.Errorf("llamacpp: parse response: %w", err)
 	}
 
-	return result.Content, nil
+	return StripThinkingTags(result.Content), nil
 }
