@@ -25,7 +25,8 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 --output, -o       Output directory (default: ./output, overridable in config)
 --llm              Override LLM backend (ollama / llamacpp / claude-api / gemini-cli)
 --cookie-file      Path to cookie.txt (Netscape format)
---cookie-browser   Auto-extract cookie from browser (chrome / firefox / safari / edge)
+--cookie-browser   Auto-extract cookie from browser (chrome / firefox / safari / edge / brave)
+--force            Force re-process even if output already exists (skip cache)
 --dry-run          List videos that would be processed without executing
 --verbose, -v      Verbose logging
 ```
@@ -72,7 +73,8 @@ whisper:
 # Cookie settings (optional)
 cookie:
   file: ""                           # Path to cookie.txt
-  browser: ""                        # chrome / firefox / safari / edge
+  browser: ""                        # chrome / firefox / safari / edge / brave
+  chrome_profile: ""                 # Chrome profile name (e.g., "Default", "Profile 1")
 
 # LLM settings
 llm:
@@ -238,6 +240,8 @@ For inline `summary.prompt`, the transcript is automatically appended after the 
 ### Skip Detection
 
 Glob for `*__{video_id}__*` pattern in the channel's output directory. If a matching folder is found, skip processing. This is resilient to title changes or sanitization logic updates.
+
+When `--force` flag is set, skip detection is bypassed and existing output is overwritten.
 
 ## Core Pipeline
 
@@ -534,21 +538,57 @@ Not customizable. The program generates the prompt:
 
 When `preferred_languages` is not set, the video's original language is detected via `yt-dlp --dump-json` metadata field (`language` or `original_language`). If the field is absent or null, fall back to English (`en`).
 
+### Subtitle Download Strategy (Detailed)
+
+Uses yt-dlp's `--sub-lang` with comma-separated priority list and a cascading download approach:
+
+```
+Step 1: Try manual subtitles in target language(s)
+        yt-dlp --write-subs --sub-lang "ja,zh-Hant,en" --skip-download --convert-subs srt
+        ├─ Found → done
+        └─ Not found → Step 2
+
+Step 2: Try auto-generated subtitles in target language(s)
+        yt-dlp --write-auto-subs --sub-lang "ja,zh-Hant,en" --skip-download --convert-subs srt
+        ├─ Found → done (mark subtitle_type: auto)
+        └─ Not found → Step 3
+
+Step 3: Try manual subtitles (any language, yt-dlp fallback)
+        yt-dlp --write-subs --skip-download --convert-subs srt
+        ├─ Found → done
+        └─ Not found → Step 4
+
+Step 4: Try auto-generated subtitles (any language, yt-dlp fallback)
+        yt-dlp --write-auto-subs --skip-download --convert-subs srt
+        ├─ Found → done (mark subtitle_type: auto)
+        └─ Not found → whisper transcription branch
+```
+
+Language codes are passed directly from config/detection to yt-dlp without normalization. Normalization to ISO 639-1 prefix is only done at the whisper model lookup boundary (e.g., `zh-Hant` → `zh` for `language_models` mapping).
+
 ### Cookie Usage Strategy
 
 Cookies are used **only when needed** to minimize account risk:
 
 ```
-Attempt download (no cookie)
-├─ Success → continue
-└─ Fail with "sign in required" / "age-restricted"
-   ├─ Cookie configured? → retry with cookie (once)
-   │   ├─ Success → continue
+Fetch metadata (yt-dlp --dump-json, no cookie)
+├─ Success → check availability field
+│   ├─ availability = public / unlisted → proceed without cookie
+│   └─ availability = members_only / needs_auth / premium_only / private
+│       ├─ Cookie configured? → use cookie for all subsequent downloads
+│       └─ No cookie? → log warning "cookie required", skip
+└─ Fail with "sign in required"
+   ├─ Cookie configured? → retry metadata with cookie (once)
+   │   ├─ Success → use cookie for all subsequent downloads
    │   └─ Fail → log error, skip
    └─ No cookie? → log warning "cookie required", skip
 ```
 
-Maps to `yt-dlp --cookies` / `--cookies-from-browser` flags. Usage is logged at WARN level.
+Key improvements:
+- **Pre-detect restricted videos** via `availability` metadata field before attempting download
+- **Chrome multi-profile support**: When `browser: chrome`, try profiles in order: `chrome_profile` (if set) → `Default` → `Profile 1`, `Profile 2`, etc.
+- Maps to `yt-dlp --cookies` / `--cookies-from-browser "chrome:Profile 1"` flags
+- Usage is logged at WARN level
 
 ## Internal Architecture
 
