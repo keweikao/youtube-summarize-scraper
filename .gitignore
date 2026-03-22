@@ -1,0 +1,26 @@
+# Build artifacts
+ytss
+*.exe
+dist/
+
+# Embedded binaries (downloaded per-platform during build)
+embedded/bin/
+
+# User config (contains API keys, personal settings)
+config.yaml
+
+# Runtime output (video files, subtitles, summaries)
+/ytss-output/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
