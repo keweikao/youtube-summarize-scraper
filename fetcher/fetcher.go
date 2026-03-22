@@ -56,32 +56,89 @@ func (f *Fetcher) FetchVideoMeta(videoURL string) (*VideoMeta, error) {
 	return &meta, nil
 }
 
-// FetchChannelVideos lists videos from a channel URL, returning up to limit items.
-// It uses --flat-playlist to avoid downloading full metadata for each video.
-func (f *Fetcher) FetchChannelVideos(channelURL string, limit int) ([]VideoMeta, error) {
-	channelVideosURL := channelURL + "/videos"
+// ChannelTabSuffixes returns the URL suffixes to fetch based on the requested content types.
+// Each type maps to a specific YouTube channel tab.
+func ChannelTabSuffixes(types []string) []string {
+	if len(types) == 0 {
+		return []string{"/videos", "/streams", "/shorts"}
+	}
+	typeSet := make(map[string]bool, len(types))
+	for _, t := range types {
+		typeSet[t] = true
+	}
+	var suffixes []string
+	if typeSet["video"] {
+		suffixes = append(suffixes, "/videos")
+	}
+	if typeSet["live"] {
+		suffixes = append(suffixes, "/streams")
+	}
+	if typeSet["short"] {
+		suffixes = append(suffixes, "/shorts")
+	}
+	if len(suffixes) == 0 {
+		return []string{"/videos", "/streams", "/shorts"}
+	}
+	return suffixes
+}
+
+// FetchChannelVideos lists videos from a channel URL using --flat-playlist for speed.
+// Returns lightweight metadata (ID, title, duration). Full metadata must be fetched
+// separately via FetchVideoMeta for videos that need processing.
+func (f *Fetcher) FetchChannelVideos(channelURL string, limit int, tabSuffixes []string) ([]VideoMeta, error) {
+	var allVideos []VideoMeta
+
+	for _, suffix := range tabSuffixes {
+		tabURL := channelURL + suffix
+		remaining := limit - len(allVideos)
+		if remaining <= 0 {
+			break
+		}
+
+		videos, err := f.fetchChannelTab(tabURL, remaining)
+		if err != nil {
+			return nil, fmt.Errorf("fetching %s: %w", tabURL, err)
+		}
+		allVideos = append(allVideos, videos...)
+	}
+
+	if len(allVideos) > limit {
+		allVideos = allVideos[:limit]
+	}
+	return allVideos, nil
+}
+
+// fetchChannelTab fetches videos from a single channel tab URL using flat-playlist.
+func (f *Fetcher) fetchChannelTab(tabURL string, limit int) ([]VideoMeta, error) {
 	args := []string{
 		"--flat-playlist",
 		"--dump-json",
-		channelVideosURL,
+		"--playlist-end", fmt.Sprintf("%d", limit),
+		tabURL,
 	}
 
-	out, err := f.runYtDlp(args, false)
+	out, err := f.runYtDlpWithTimeout(args, false, 5*time.Minute)
 	if err != nil {
 		return nil, fmt.Errorf("fetching channel videos: %w", err)
 	}
 
 	var videos []VideoMeta
 	scanner := bufio.NewScanner(bytes.NewReader(out))
-	// Increase scanner buffer for large JSON lines.
 	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
 	for scanner.Scan() {
 		if limit > 0 && len(videos) >= limit {
 			break
 		}
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
 		var meta VideoMeta
-		if err := json.Unmarshal(scanner.Bytes(), &meta); err != nil {
-			continue // skip malformed lines
+		if err := json.Unmarshal(line, &meta); err != nil {
+			continue
+		}
+		if meta.ID == "" {
+			continue
 		}
 		videos = append(videos, meta)
 	}
@@ -95,7 +152,12 @@ func (f *Fetcher) FetchChannelVideos(channelURL string, limit int) ([]VideoMeta,
 // runYtDlp executes yt-dlp with the given arguments and an optional cookie flag.
 // A context timeout of 60 seconds is applied.
 func (f *Fetcher) runYtDlp(args []string, useCookie bool) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), metadataTimeout)
+	return f.runYtDlpWithTimeout(args, useCookie, metadataTimeout)
+}
+
+// runYtDlpWithTimeout executes yt-dlp with a custom timeout.
+func (f *Fetcher) runYtDlpWithTimeout(args []string, useCookie bool, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	fullArgs := make([]string, 0, len(args)+4)

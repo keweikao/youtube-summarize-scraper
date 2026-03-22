@@ -3,6 +3,7 @@ package pipeline
 import (
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +81,19 @@ func NewPipeline(cfg *config.Config, force, dryRun bool) (*Pipeline, error) {
 func (p *Pipeline) ProcessBatch() (*Stats, error) {
 	total := &Stats{}
 
-	for _, ch := range p.config.Channels {
+	// Copy channels slice to avoid mutating config.
+	channels := make([]config.ChannelConfig, len(p.config.Channels))
+	copy(channels, p.config.Channels)
+
+	// Shuffle channel order if configured.
+	if p.config.Batch.RandomOrder && len(channels) > 1 {
+		rand.Shuffle(len(channels), func(i, j int) {
+			channels[i], channels[j] = channels[j], channels[i]
+		})
+		slog.Info("shuffled channel order")
+	}
+
+	for i, ch := range channels {
 		count := p.config.EffectiveCount(ch)
 		slog.Info("processing channel", "url", ch.URL, "count", count)
 
@@ -94,6 +107,18 @@ func (p *Pipeline) ProcessBatch() (*Stats, error) {
 		total.Skipped += stats.Skipped
 		total.Failed += stats.Failed
 		total.Errors = append(total.Errors, stats.Errors...)
+
+		// Random delay between channels (except after the last one).
+		if i < len(channels)-1 && p.config.Batch.DelayMax > 0 {
+			minDelay := p.config.Batch.DelayMin
+			maxDelay := p.config.Batch.DelayMax
+			if minDelay > maxDelay {
+				minDelay = maxDelay
+			}
+			delay := minDelay + rand.IntN(maxDelay-minDelay+1)
+			slog.Info("waiting before next channel", "delay_seconds", delay)
+			time.Sleep(time.Duration(delay) * time.Second)
+		}
 	}
 
 	// Generate Obsidian MOC files for each channel if enabled.
@@ -127,21 +152,21 @@ func (p *Pipeline) ProcessBatch() (*Stats, error) {
 
 // ProcessChannel fetches videos from a channel, applies filters, and processes each video.
 func (p *Pipeline) ProcessChannel(channelURL string, count int, channelCfg *config.ChannelConfig) (*Stats, error) {
-	// Fetch a larger set to allow for filtering.
-	fetchLimit := count * 3
-	if fetchLimit < 30 {
-		fetchLimit = 30
-	}
+	// Determine which channel tabs to fetch based on filter types.
+	filterCfg := p.config.EffectiveFilter(*channelCfg)
+	tabSuffixes := fetcher.ChannelTabSuffixes(filterCfg.Types)
 
-	videos, err := p.fetcher.FetchChannelVideos(channelURL, fetchLimit)
+	// Small buffer for duration/other filters within the same type.
+	fetchLimit := count + 5
+
+	videos, err := p.fetcher.FetchChannelVideos(channelURL, fetchLimit, tabSuffixes)
 	if err != nil {
 		return nil, fmt.Errorf("fetching channel videos: %w", err)
 	}
 
 	slog.Info("fetched channel videos", "url", channelURL, "total", len(videos))
 
-	// Apply filter.
-	filterCfg := p.config.EffectiveFilter(*channelCfg)
+	// Apply filter (duration, etc. — type filtering already done via tab selection).
 	filtered := fetcher.FilterVideos(videos, filterCfg)
 	slog.Info("filtered videos", "before", len(videos), "after", len(filtered))
 
@@ -152,23 +177,46 @@ func (p *Pipeline) ProcessChannel(channelURL string, count int, channelCfg *conf
 
 	stats := &Stats{}
 	for i, meta := range filtered {
+		// Smart skip check before fetching full metadata.
+		if !p.force {
+			existingDir := output.FindVideoDir(p.config.OutputDir, meta.ID)
+			if existingDir != "" && output.HasFile(existingDir, "summary.md") {
+				// Fully processed — skip entirely.
+				slog.Info(fmt.Sprintf("[%d/%d] %s - skipped (complete)", i+1, len(filtered), meta.ID),
+					"title", meta.Title,
+				)
+				stats.Skipped++
+				continue
+			}
+			if existingDir != "" {
+				// Partial — has folder but missing summary, will resume.
+				slog.Info(fmt.Sprintf("[%d/%d] %s - resuming (missing summary)", i+1, len(filtered), meta.ID),
+					"title", meta.Title,
+				)
+			}
+		}
+
 		slog.Info(fmt.Sprintf("[%d/%d] %s - processing", i+1, len(filtered), meta.ID),
 			"title", meta.Title,
 		)
 
 		metaCopy := meta
 		if err := p.ProcessVideo(&metaCopy, channelCfg); err != nil {
-			slog.Error("video processing failed",
-				"video_id", meta.ID,
-				"title", meta.Title,
-				"error", err,
-			)
-			stats.Failed++
-			stats.Errors = append(stats.Errors, VideoError{
-				VideoID: meta.ID,
-				Title:   meta.Title,
-				Err:     err,
-			})
+			if IsSkipped(err) {
+				stats.Skipped++
+			} else {
+				slog.Error("video processing failed",
+					"video_id", meta.ID,
+					"title", meta.Title,
+					"error", err,
+				)
+				stats.Failed++
+				stats.Errors = append(stats.Errors, VideoError{
+					VideoID: meta.ID,
+					Title:   meta.Title,
+					Err:     err,
+				})
+			}
 		} else {
 			stats.Success++
 		}
@@ -213,14 +261,44 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 		return errSkipped
 	}
 
-	// 5. Create output directory.
+	// 5. Check for resume: existing dir with transcription but no summary.
 	videoDir := output.VideoDir(p.config.OutputDir, channelHandle, meta.UploadDate, meta.ID, meta.Title)
+	existingDir := output.FindVideoDir(p.config.OutputDir, meta.ID)
+	if existingDir != "" {
+		videoDir = existingDir // reuse existing dir (may have different title sanitization)
+	}
+
 	if err := output.EnsureDir(videoDir); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
 	// 6. Build file prefix.
 	filePrefix := output.VideoFilePrefix(meta.UploadDate, meta.ID)
+
+	// 6.5. Resume path: if transcription exists but summary doesn't, skip to summarization.
+	if existingDir != "" && output.HasFile(videoDir, "transcription.md") && !output.HasFile(videoDir, "summary.md") {
+		slog.Info("resuming: reading existing transcription", "video_id", meta.ID)
+		transcriptionFiles, _ := filepath.Glob(filepath.Join(videoDir, "*__transcription.md"))
+		if len(transcriptionFiles) > 0 {
+			data, err := os.ReadFile(transcriptionFiles[0])
+			if err == nil {
+				// Extract text after frontmatter (after second "---").
+				content := string(data)
+				if parts := strings.SplitN(content, "---\n", 3); len(parts) == 3 {
+					transcriptText := strings.TrimSpace(parts[2])
+					if p.summarizer != nil {
+						subLang := resolveVideoLanguage(meta)
+						if err := p.runSummarization(meta, channelCfg, channelHandle, videoDir, filePrefix, transcriptText, subLang, "resumed", processedAtNow()); err != nil {
+							slog.Warn("summarization failed on resume", "video_id", meta.ID, "error", err)
+						}
+					}
+					slog.Info("resume complete", "video_id", meta.ID)
+					return nil
+				}
+			}
+		}
+		slog.Warn("resume failed, falling through to full processing", "video_id", meta.ID)
+	}
 
 	// 7. Build cookie args.
 	cookieArgs := buildCookieArgs(p.config.Cookie)
@@ -235,6 +313,7 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 	var srtContent string
 	var subLang string
 	var subType string
+	var whisperModel string
 
 	subResult, err := p.subtitle.Download(
 		videoURL(meta.ID),
@@ -262,6 +341,7 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 		srtContent = transResult.SRTContent
 		subLang = transResult.Language
 		subType = "whisper"
+		whisperModel = transResult.ModelUsed
 		slog.Info("whisper transcription succeeded",
 			"video_id", meta.ID,
 			"language", subLang,
@@ -289,6 +369,7 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 	// 11. Convert SRT to text and write transcription.md.
 	transcriptText := subtitle.SRTToText(srtContent)
 	fmData := buildFrontmatterData(meta, channelHandle, subLang, subType, processedAt)
+	fmData.WhisperModel = whisperModel
 
 	// Enrich tags for Obsidian if enabled.
 	if p.config.Obsidian.Enabled {
@@ -555,6 +636,10 @@ func resolveVideoLanguage(meta *fetcher.VideoMeta) string {
 
 	// Tier 4: unknown.
 	return ""
+}
+
+func processedAtNow() string {
+	return time.Now().Format(time.RFC3339)
 }
 
 // insertMermaidAfterFirstHeading inserts a Mermaid code block after the first

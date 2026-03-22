@@ -260,18 +260,36 @@ For inline `summary.prompt`, the transcript is automatically appended after the 
 
 ### Channel Video Fetching
 
-To get the latest videos from a channel:
+Uses a two-phase approach: fast listing via `--flat-playlist`, then on-demand full metadata fetch only for new videos.
 
-1. `yt-dlp --flat-playlist --dump-json <channel_url>/videos` — fetches lightweight metadata (id, title, duration, live_status, upload_date) without downloading
-2. Program filters results based on `filter` config:
-   - `types`: match `live_status` field (`not_live` → video, `was_live` → live, `post_live` → live; duration < 60s and vertical → short)
-   - `min_duration` / `max_duration`: filter by `duration` field
-3. Take the first N videos that pass the filter
-4. For each video, fetch full metadata via `yt-dlp --dump-json <video_url>` (needed for tags, categories, language, etc.)
+**Phase 1 — Lightweight listing:**
+
+1. Select YouTube channel tab URL(s) based on `filter.types` config:
+   - `["video"]` → `<channel_url>/videos`
+   - `["live"]` → `<channel_url>/streams`
+   - `["short"]` → `<channel_url>/shorts`
+   - Multiple types → one request per tab (e.g., `["video", "live"]` → `/videos` + `/streams`)
+   - Unset or all types → `/videos` + `/streams` + `/shorts` (three requests)
+2. `yt-dlp --flat-playlist --dump-json --playlist-end N <tab_url>` — fetches lightweight metadata (id, title, duration, description). N = `count + 5`. Type filtering is handled at the tab URL level, not program level.
+3. Apply `min_duration` / `max_duration` filter on the listing results.
+4. Take the first N videos that pass the filter.
+
+**Phase 2 — Skip check + on-demand fetch:**
+
+5. For each video, run global skip detection (see below) **before** fetching full metadata.
+6. Only for non-skipped videos: fetch full metadata via `yt-dlp --dump-json <video_url>`, then process.
+
+This approach avoids fetching full metadata for already-processed videos, reducing per-channel time from ~1 min to ~8s when all videos are already processed.
+
+**Note:** `--flat-playlist` returns `duration` as float (e.g., `1434.0`) and does not include `live_status`, `upload_date`, `tags`, `channel`, or `media_type`. These fields are populated in Phase 2 via full metadata fetch.
 
 ### Skip Detection
 
-Glob for `*__{video_id}__*` pattern in the channel's output directory. If a matching folder is found, skip processing. This is resilient to title changes or sanitization logic updates.
+**Global skip detection** (`IsProcessedGlobal`): Glob for `outputDir/*/**/*__{video_id}__*` across all channel directories. This is channel-agnostic, allowing skip checks without knowing the channel handle (which is unavailable in flat-playlist mode).
+
+**Per-channel skip detection** (`IsProcessed`): Glob for `*__{video_id}__*` within a specific channel directory. Used by `ytss video` command.
+
+Both methods are resilient to title changes or sanitization logic updates (they match on video ID only).
 
 When `--force` flag is set, skip detection is bypassed and existing output is overwritten.
 
@@ -768,6 +786,10 @@ embedded/bin/
 ### Processing Model
 
 Videos are processed **sequentially, one at a time**. Whisper transcription is CPU/GPU-intensive and LLM calls can be resource-heavy; concurrent processing is out of scope for the initial version.
+
+**Batch settings** (`batch` config section):
+- `random_order: true` — shuffles channel processing order each run to avoid predictable patterns and ensure fair processing
+- `delay_min` / `delay_max` — random delay (in seconds) between channels to reduce request frequency. Delay is `rand(min, max)` seconds, applied after each channel except the last.
 
 ### Timeouts
 
