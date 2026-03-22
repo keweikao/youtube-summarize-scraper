@@ -10,8 +10,7 @@ embedded/bin/
 config.yaml
 
 # Runtime output (video files, subtitles, summaries)
-# Exclude any directory that looks like channel output (@handle dirs)
-output/@*/
+/ytss-output/
 
 # IDE
 .idea/

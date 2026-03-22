@@ -1,7 +1,7 @@
 # YTSS (YouTube Summarize Scraper) Configuration
 
 # Output directory
-output_dir: "./output"
+output_dir: "./ytss-output"
 
 # Subtitle language preferences (optional, supports regex via yt-dlp)
 # If unset: detect video original language → fallback to English

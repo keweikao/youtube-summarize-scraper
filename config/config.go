@@ -117,7 +117,7 @@ func Load(path string) (*Config, error) {
 
 func DefaultConfig() *Config {
 	return &Config{
-		OutputDir:    "./output",
+		OutputDir:    "./ytss-output",
 		DefaultCount: 5,
 		Whisper: WhisperConfig{
 			ModelDir:     "~/.ytss/models",
