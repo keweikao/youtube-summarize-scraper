@@ -27,6 +27,7 @@ func NewSummarizer(cfg config.LLMConfig) (Summarizer, error) {
 		return &OllamaSummarizer{
 			endpoint: cfg.Ollama.Endpoint,
 			model:    cfg.Ollama.Model,
+			think:    cfg.Ollama.Think,
 		}, nil
 	case "llamacpp":
 		return &LlamaCppSummarizer{

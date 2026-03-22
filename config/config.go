@@ -44,6 +44,7 @@ type LLMConfig struct {
 type OllamaConfig struct {
 	Model    string `yaml:"model"`
 	Endpoint string `yaml:"endpoint"`
+	Think    *bool  `yaml:"think,omitempty"`
 }
 
 type LlamaCppConfig struct {
@@ -143,6 +144,7 @@ func DefaultConfig() *Config {
 			Ollama: OllamaConfig{
 				Model:    "llama3",
 				Endpoint: "http://localhost:11434",
+				Think:    ptrBool(false),
 			},
 			LlamaCpp: LlamaCppConfig{
 				Endpoint: "http://localhost:8080",
@@ -189,3 +191,5 @@ func (c *Config) EffectiveFilter(ch ChannelConfig) FilterConfig {
 	}
 	return c.Filter
 }
+
+func ptrBool(v bool) *bool { return &v }

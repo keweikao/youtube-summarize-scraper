@@ -14,6 +14,7 @@ import (
 type OllamaSummarizer struct {
 	endpoint string
 	model    string
+	think    *bool
 }
 
 type ollamaRequest struct {
@@ -40,19 +41,20 @@ func (o *OllamaSummarizer) Summarize(text string, opts SummarizeOptions) (string
 
 	combinedPrompt := resolvePrompt(text, opts)
 
-	// Disable thinking mode so that num_predict budget is fully allocated
-	// to the actual response. Without this, thinking models (e.g., Qwen3.5)
-	// consume the entire num_predict budget on internal reasoning, leaving
-	// the response empty.
-	thinkFalse := false
+	// Auto-scale num_predict when thinking is enabled, since Ollama's
+	// num_predict controls the total budget for thinking + response combined.
+	numPredict := opts.MaxTokens
+	if o.think == nil || *o.think {
+		numPredict = opts.MaxTokens * 4
+	}
 
 	reqBody := ollamaRequest{
 		Model:  model,
 		Prompt: combinedPrompt,
 		Stream: false,
-		Think:  &thinkFalse,
+		Think:  o.think,
 		Options: ollamaOptions{
-			NumPredict: opts.MaxTokens,
+			NumPredict: numPredict,
 		},
 	}
 
