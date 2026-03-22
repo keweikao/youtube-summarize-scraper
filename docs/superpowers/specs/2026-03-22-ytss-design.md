@@ -33,6 +33,8 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 
 `ytss video` and `ytss channel` work standalone without config.yaml (using defaults). When no config exists, the default LLM provider is `ollama` at `localhost:11434`. If the LLM is unreachable, subtitle and transcription are still produced; only the summary step is skipped with a warning.
 
+**Output directory for `ytss video` and `ytss channel`:** The channel name is auto-detected from video/channel metadata (`yt-dlp --dump-json` → `channel` field). Output follows the same structure as `ytss run`: `output/@channel-name/YYYY-MM-DD__id__title/`.
+
 ## Config File
 
 ```yaml
@@ -107,11 +109,27 @@ summary:
   mermaid:
     enabled: true                    # Enable Mermaid flowchart generation (default: true)
 
+# Video filter settings
+filter:
+  types: ["video", "live", "short"]  # video / live / short (default: all types)
+  min_duration: 0                    # Min seconds (0 = no filter)
+  max_duration: 0                    # Max seconds (0 = no limit)
+
+# Obsidian integration (optional)
+obsidian:
+  enabled: false
+  auto_tags: ["youtube"]
+  generate_moc: true
+  wikilinks: true
+
 # Channel list
 channels:
   - url: "https://www.youtube.com/@channel-a"
     count: 10                        # Override default_count
     summary_prompt_file: "./prompts/tech-summary.md"  # Per-channel override
+    filter:                          # Per-channel filter override
+      types: ["video"]               # This channel: videos only
+      min_duration: 60
   - url: "https://www.youtube.com/@channel-b"
   - url: "https://www.youtube.com/@channel-c"
 ```
@@ -234,9 +252,20 @@ External prompt files and built-in prompts support variable substitution using `
 | `{{tags}}` | Comma-separated tags |
 | `{{transcript}}` | Full transcription text |
 | `{{transcription_length}}` | Transcription character count |
-| `{{transcription_tier}}` | Size tier (e.g., "< 1,000 字", "1,000-5,000 字") |
+| `{{transcription_tier}}` | Size tier label, language-aware: zh-Hant uses 字 (e.g., "500-3,000 字"), en uses chars (e.g., "1,000-5,000 chars"), ja uses 文字 (e.g., "500-3,000 文字"). Thresholds differ by language (CJK: lower thresholds due to higher info density per char) |
 
 For inline `summary.prompt`, the transcript is automatically appended after the prompt text. Variable substitution is not available in inline mode.
+
+### Channel Video Fetching
+
+To get the latest videos from a channel:
+
+1. `yt-dlp --flat-playlist --dump-json <channel_url>/videos` — fetches lightweight metadata (id, title, duration, live_status, upload_date) without downloading
+2. Program filters results based on `filter` config:
+   - `types`: match `live_status` field (`not_live` → video, `was_live` → live, `post_live` → live; duration < 60s and vertical → short)
+   - `min_duration` / `max_duration`: filter by `duration` field
+3. Take the first N videos that pass the filter
+4. For each video, fetch full metadata via `yt-dlp --dump-json <video_url>` (needed for tags, categories, language, etc.)
 
 ### Skip Detection
 
@@ -251,9 +280,9 @@ When `--force` flag is set, skip detection is bypassed and existing output is ov
 │                         ytss run                                │
 │                                                                 │
 │  ┌──────────┐   ┌──────────────┐   ┌────────────────────────┐  │
-│  │ Read     │──▶│ Fetch latest │──▶│ Filter: skip if video  │  │
-│  │ config   │   │ N videos per │   │ ID folder exists in    │  │
-│  │          │   │ channel      │   │ output directory       │  │
+│  │ Read     │──▶│ Fetch latest │──▶│ Filter by type/  │──▶│ Skip if video  │  │
+│  │ config   │   │ videos per   │   │ duration, take   │   │ ID folder      │  │
+│  │          │   │ channel      │   │ first N matches  │   │ already exists  │  │
 │  └──────────┘   └──────────────┘   └───────────┬────────────┘  │
 │                                                 ▼               │
 │                                    ┌────────────────────────┐  │
@@ -303,7 +332,10 @@ Stage 3: Generate Mermaid Flowchart (if summary.mermaid.enabled)
     Fail:   skip Mermaid section, flow continues normally
          ↓
 Program assembles final summary.md:
-    frontmatter (metadata + keywords) + Mermaid (if valid) + summary text
+    frontmatter (metadata + keywords)
+    + summary text (概述 section)
+    + Mermaid flowchart (if valid, inserted after 概述 and before 章節摘要)
+    + summary text (remaining sections)
 ```
 
 - All three stages use the **same LLM provider**
@@ -312,6 +344,7 @@ Program assembles final summary.md:
 - Stage 2 failure is non-blocking — `keywords` defaults to `[]`
 - Stage 3 failure is non-blocking — Mermaid section is simply omitted
 - Stage 3 output is validated for Mermaid syntax before inclusion
+- Stage 3 prompt language follows `summary.language` (same as Stage 1)
 - Keyword parsing: split response by newlines, trim whitespace and bullet markers, discard empty lines
 
 ### Built-in Prompt Templates
@@ -345,10 +378,10 @@ File: `prompts/builtin/summary-zh-Hant.md`
 
 | 轉錄字數 | 概述最少 | 章節最少 | 每章關鍵細節最少 | 重點最少 |
 |---------|---------|---------|---------------|---------|
-| < 1,000 字 | 2 句 | 2 章 | 2 項 | 3 個 |
-| 1,000-5,000 字 | 4 句 | 3 章 | 2 項 | 5 個 |
-| 5,000-15,000 字 | 4 句 | 4 章 | 3 項 | 7 個 |
-| > 15,000 字 | 6 句 | 5 章 | 3 項 | 10 個 |
+| < 500 字 | 2 句 | 2 章 | 2 項 | 3 個 |
+| 500-3,000 字 | 4 句 | 3 章 | 2 項 | 5 個 |
+| 3,000-10,000 字 | 4 句 | 4 章 | 3 項 | 7 個 |
+| > 10,000 字 | 6 句 | 5 章 | 3 項 | 10 個 |
 
 本影片屬於「{{transcription_tier}}」級別。以上為最低要求，如內容豐富請自行增加。
 
@@ -469,10 +502,10 @@ File: `prompts/builtin/summary-ja.md`
 
 | 書き起こし文字数 | 概要最低 | セクション最低 | 各セクション詳細最低 | 要点最低 |
 |---------------|---------|-------------|------------------|---------|
-| < 1,000 文字 | 2 文 | 2 セクション | 2 項目 | 3 個 |
-| 1,000-5,000 文字 | 4 文 | 3 セクション | 2 項目 | 5 個 |
-| 5,000-15,000 文字 | 4 文 | 4 セクション | 3 項目 | 7 個 |
-| > 15,000 文字 | 6 文 | 5 セクション | 3 項目 | 10 個 |
+| < 500 文字 | 2 文 | 2 セクション | 2 項目 | 3 個 |
+| 500-3,000 文字 | 4 文 | 3 セクション | 2 項目 | 5 個 |
+| 3,000-10,000 文字 | 4 文 | 4 セクション | 3 項目 | 7 個 |
+| > 10,000 文字 | 6 文 | 5 セクション | 3 項目 | 10 個 |
 
 本動画は「{{transcription_tier}}」レベルです。上記は最低要件であり、内容が豊富な場合は増やしてください。
 
