@@ -178,10 +178,23 @@ func (p *Pipeline) ProcessChannel(channelURL string, count int, channelCfg *conf
 
 // ProcessVideo is the core pipeline for a single video.
 func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.ChannelConfig) error {
-	// 1. Determine channel handle.
+	// 1. Fetch full metadata if we only have partial data (e.g., from ytss video command).
+	if meta.Tags == nil {
+		slog.Debug("fetching full metadata", "video_id", meta.ID)
+		videoURL := fmt.Sprintf("https://www.youtube.com/watch?v=%s", meta.ID)
+		fullMeta, err := p.fetcher.FetchVideoMeta(videoURL)
+		if err != nil {
+			slog.Warn("failed to fetch full metadata, continuing with partial data",
+				"video_id", meta.ID, "error", err)
+		} else {
+			*meta = *fullMeta
+		}
+	}
+
+	// 2. Determine channel handle (must be after metadata fetch).
 	channelHandle := deriveChannelHandle(meta)
 
-	// 2. Check if already processed (unless force).
+	// 3. Check if already processed (unless force).
 	if !p.force {
 		processed, err := output.IsProcessed(p.config.OutputDir, channelHandle, meta.ID)
 		if err != nil {
@@ -193,23 +206,10 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 		}
 	}
 
-	// 3. Dry run: log and return.
+	// 4. Dry run: log and return.
 	if p.dryRun {
 		slog.Info("would process (dry run)", "video_id", meta.ID, "title", meta.Title)
 		return errSkipped
-	}
-
-	// 4. Fetch full metadata if we only have flat-playlist data.
-	if meta.Tags == nil {
-		slog.Debug("fetching full metadata", "video_id", meta.ID)
-		videoURL := fmt.Sprintf("https://www.youtube.com/watch?v=%s", meta.ID)
-		fullMeta, err := p.fetcher.FetchVideoMeta(videoURL)
-		if err != nil {
-			slog.Warn("failed to fetch full metadata, continuing with partial data",
-				"video_id", meta.ID, "error", err)
-		} else {
-			*meta = *fullMeta
-		}
 	}
 
 	// 5. Create output directory.

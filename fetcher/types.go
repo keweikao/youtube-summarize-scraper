@@ -4,10 +4,10 @@ package fetcher
 type VideoMeta struct {
 	ID             string   `json:"id"`
 	Title          string   `json:"title"`
-	Channel        string   `json:"channel"`         // handle like @channel (uploader_id)
-	ChannelName    string   `json:"channel_name"`     // display name (uploader / channel)
-	UploadDate     string   `json:"upload_date"`      // YYYYMMDD
-	Duration       int      `json:"duration"`         // seconds
+	Channel        string   `json:"uploader_id"`      // handle like @HighYield
+	ChannelName    string   `json:"channel"`           // display name like "High Yield"
+	UploadDate     string   `json:"upload_date"`       // YYYYMMDD
+	Duration       int      `json:"duration"`          // seconds
 	DurationString string   `json:"duration_string"`
 	Language       string   `json:"language"`
 	Tags           []string `json:"tags"`
