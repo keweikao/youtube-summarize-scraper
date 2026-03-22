@@ -39,11 +39,12 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 # Output
 output_dir: "./output"
 
-# Subtitle language preferences (optional)
+# Subtitle language preferences (optional, supports regex via yt-dlp)
 # If unset: detect video original language → fallback to English
+# Note: YouTube requires zh-Hant/zh-Hans, not bare "zh"
 preferred_languages:
   - ja
-  - zh-Hant
+  - "zh-Hant,zh-Hans"               # Comma = yt-dlp priority list for Chinese
   - en
 
 # Default video count per channel
@@ -564,7 +565,37 @@ Step 4: Try auto-generated subtitles (any language, yt-dlp fallback)
         └─ Not found → whisper transcription branch
 ```
 
-Language codes are passed directly from config/detection to yt-dlp without normalization. Normalization to ISO 639-1 prefix is only done at the whisper model lookup boundary (e.g., `zh-Hant` → `zh` for `language_models` mapping).
+Language codes are passed directly from config/detection to yt-dlp without normalization. Normalization is only done at the **whisper model lookup boundary** using the function described below.
+
+### Language Code Normalization
+
+A `normalizeToISO639_1(code)` function is used **only** for whisper model lookup. It is NOT used for yt-dlp operations.
+
+**Rules (applied in order):**
+1. Convert to lowercase
+2. Apply special mappings (ISO 639-3 / bibliographic → ISO 639-1):
+
+| Input | Output | Note |
+|-------|--------|------|
+| `cmn`, `yue`, `wuu` | `zh` | Chinese macro-language variants |
+| `jpn` | `ja` | Japanese ISO 639-3 |
+| `kor` | `ko` | Korean ISO 639-3 |
+| `eng` | `en` | English ISO 639-3 |
+| `fra`, `fre` | `fr` | French (terminologic / bibliographic) |
+| `deu`, `ger` | `de` | German (terminologic / bibliographic) |
+| `spa` | `es` | Spanish ISO 639-3 |
+| `por` | `pt` | Portuguese ISO 639-3 |
+| `rus` | `ru` | Russian ISO 639-3 |
+
+3. If not in special mappings and length > 2: take the first two characters
+   - `zh-Hant` → `zh`, `zh-Hans` → `zh`, `zh-TW` → `zh`
+   - `ja-JP` → `ja`
+   - `en-US` → `en`, `en-orig` → `en`, `en-uYU-mmqFLq8` → `en`
+   - `ko-KR` → `ko`
+
+4. Result is used to lookup `whisper.language_models[result]`
+
+**Important yt-dlp note:** YouTube does not recognize bare `zh` for subtitle downloads. Always use `zh-Hant`, `zh-Hans`, or the regex pattern `zh.*` in `preferred_languages` and `--sub-lang`.
 
 ### Cookie Usage Strategy
 
