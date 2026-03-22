@@ -6,8 +6,12 @@ dist/
 # Embedded binaries (downloaded per-platform during build)
 embedded/bin/
 
-# Runtime output directory (default config value, not the Go package)
-/ytss-output/
+# User config (contains API keys, personal settings)
+config.yaml
+
+# Runtime output (video files, subtitles, summaries)
+# Exclude any directory that looks like channel output (@handle dirs)
+output/@*/
 
 # IDE
 .idea/
