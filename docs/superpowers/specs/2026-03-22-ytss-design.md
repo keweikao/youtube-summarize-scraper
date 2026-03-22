@@ -54,14 +54,20 @@ whisper:
   default_model: "base"              # Fallback model for unmatched languages
 
   language_models:                   # Language-specific model overrides (ISO 639-1 keys)
-    ja: "medium"
-    zh: "medium"                     # Matches zh-Hant, zh-Hans, zh-TW, etc.
-    en: "base"
+    ja: "kotoba-ja"                  # Japanese-specialized (kotoba-tech, 1.4GB)
+    zh: "belle-zh"                   # Chinese-specialized (BELLE-2, 1.5GB)
+    en: "medium"                     # zh key matches zh-Hant, zh-Hans, zh-TW, etc.
 
   model_sources:                     # Download URLs (optional, defaults to HuggingFace)
     tiny: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
     base: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"
+    small: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
     medium: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
+    large-v3: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+    large-v3-turbo: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+    belle-zh: "https://huggingface.co/BELLE-2/Belle-whisper-large-v3-turbo-zh-ggml/resolve/main/ggml-model.bin"
+    kotoba-ja: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-model.bin"
+    kotoba-ja-q5: "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-ggml/resolve/main/ggml-model-q5.bin"
 
 # Cookie settings (optional)
 cookie:
