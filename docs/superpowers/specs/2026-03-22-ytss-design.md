@@ -6,6 +6,8 @@ A single Go binary CLI tool that reads a list of YouTube channels from a YAML co
 
 External tools (`yt-dlp`, `whisper.cpp`) are embedded in the binary via `go:embed` and released to a cache directory at runtime. Whisper models are downloaded on demand.
 
+**Important:** Since embedded binaries are platform-specific, each target platform requires its own build with the correct binaries staged. Cross-compilation is a per-platform sequential process. All paths using `~` (e.g., `~/.ytss/`) are resolved at runtime via `os.UserHomeDir()`.
+
 ## CLI Interface
 
 ### Commands
@@ -28,7 +30,7 @@ ytss channel <URL or @handle> -n 5  # Summarize latest N videos from a channel
 --verbose, -v      Verbose logging
 ```
 
-`ytss video` and `ytss channel` work standalone without config.yaml (using defaults).
+`ytss video` and `ytss channel` work standalone without config.yaml (using defaults). When no config exists, the default LLM provider is `ollama` at `localhost:11434`. If the LLM is unreachable, subtitle and transcription are still produced; only the summary step is skipped with a warning.
 
 ## Config File
 
@@ -51,9 +53,9 @@ whisper:
   model_dir: "~/.ytss/models"
   default_model: "base"              # Fallback model for unmatched languages
 
-  language_models:                   # Language-specific model overrides
+  language_models:                   # Language-specific model overrides (ISO 639-1 keys)
     ja: "medium"
-    zh: "medium"
+    zh: "medium"                     # Matches zh-Hant, zh-Hans, zh-TW, etc.
     en: "base"
 
   model_sources:                     # Download URLs (optional, defaults to HuggingFace)
@@ -77,7 +79,9 @@ llm:
   claude_api:
     api_key: "${CLAUDE_API_KEY}"
     model: "claude-sonnet-4-20250514"
-  gemini_cli: {}
+  gemini_cli:
+    model: "gemini-2.5-pro"          # Model name
+    path: ""                         # Path to gemini binary (default: search in PATH)
 
 # Summary settings
 summary:
@@ -117,7 +121,7 @@ output/
 
 ### Skip Detection
 
-Check if a folder containing the video ID already exists in the output directory. If found, skip processing.
+Glob for `*__{video_id}__*` pattern in the channel's output directory. If a matching folder is found, skip processing. This is resilient to title changes or sanitization logic updates.
 
 ## Core Pipeline
 
@@ -157,11 +161,15 @@ Check if a folder containing the video ID already exists in the output directory
 
 ### Whisper Transcription Branch
 
-1. Download audio via `yt-dlp` (smallest format: opus/m4a)
-2. Select whisper model: `language_models[lang]` → `default_model` fallback
+1. Download audio via `yt-dlp` in WAV 16kHz format (`-x --audio-format wav --postprocessor-args "-ar 16000"`) — whisper.cpp requires this format
+2. Select whisper model: `language_models[lang]` → `default_model` fallback. Language codes are normalized to ISO 639-1 prefix for lookup (e.g., `zh-Hant` → `zh`)
 3. Auto-download model if not present (using `model_sources` URLs)
 4. Transcribe with `whisper.cpp`
 5. Delete audio file after transcription, keep only subtitle output
+
+### Language Detection
+
+When `preferred_languages` is not set, the video's original language is detected via `yt-dlp --dump-json` metadata field (`language` or `original_language`). If the field is absent or null, fall back to English (`en`).
 
 ### Cookie Usage Strategy
 
@@ -213,7 +221,7 @@ ytss/
 
 ### Key Design Decisions
 
-- **`summarizer` uses an interface** — all LLM backends implement `Summarize(text string) (string, error)`, easy to extend
+- **`summarizer` uses an interface** — all LLM backends implement `Summarize(text string, opts SummarizeOptions) (string, error)` where `SummarizeOptions` includes prompt template, max_tokens, and model name. The pipeline is responsible for assembling the final prompt (template + transcript). CLI-based backends (gemini-cli) receive input via stdin pipe to avoid OS argument length limits
 - **`embedded/` handles binary extraction** — checks `~/.ytss/bin/` at startup, extracts from embed if missing or version mismatch
 - **`pipeline/` is the single orchestration point** — all three commands call into pipeline, differing only in input source
 
@@ -224,20 +232,35 @@ ytss/
 | Tool | Source | Embed Strategy |
 |------|--------|---------------|
 | `yt-dlp` | GitHub Release (platform-specific binary) | `go:embed` |
-| `whisper.cpp` | GitHub Release (`main` binary) | `go:embed` |
+| `whisper.cpp` | GitHub Release, `whisper-cli` binary (pin specific release tag) | `go:embed` |
 
 ### Build Process
 
 ```
 Makefile
-├── download-deps      # Download platform-specific yt-dlp & whisper.cpp to embedded/bin/
-├── build              # go build with embedded binaries
-├── build-all          # Cross-compile: darwin-arm64 / darwin-amd64 / linux-amd64
+├── download-deps GOOS=x GOARCH=y  # Download platform-specific binaries to embedded/bin/{os}-{arch}/
+├── build                          # go build for current platform
+├── build-all                      # Sequential: for each target, download-deps then build
 └── clean
 ```
 
-- Platform-specific binaries require per-platform builds
-- `embedded/bin/` is in `.gitignore`; CI downloads correct versions
+Directory layout for embedded binaries:
+```
+embedded/bin/
+├── darwin-arm64/
+│   ├── yt-dlp
+│   └── whisper-cli
+├── darwin-amd64/
+│   ├── yt-dlp
+│   └── whisper-cli
+└── linux-amd64/
+    ├── yt-dlp
+    └── whisper-cli
+```
+
+- `build-all` runs sequentially: download target deps → build target → next target
+- `embedded/bin/` is in `.gitignore`; CI downloads correct versions per platform
+- Build tags or conditional embed paths select the correct platform binary
 
 ### Go Dependencies
 
@@ -249,6 +272,19 @@ Makefile
 | Logging | stdlib `log/slog` |
 
 ## Error Handling & Logging
+
+### Processing Model
+
+Videos are processed **sequentially, one at a time**. Whisper transcription is CPU/GPU-intensive and LLM calls can be resource-heavy; concurrent processing is out of scope for the initial version.
+
+### Timeouts
+
+| Operation | Default Timeout |
+|-----------|----------------|
+| `yt-dlp` metadata/subtitle fetch | 60s |
+| `yt-dlp` audio download | 10min |
+| `whisper.cpp` transcription | 30min |
+| LLM summarization call | 5min |
 
 ### Error Strategy
 
