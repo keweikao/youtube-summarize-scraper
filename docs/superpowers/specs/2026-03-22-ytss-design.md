@@ -91,15 +91,18 @@ llm:
 
 # Summary settings
 summary:
-  # Inline prompt (for simple prompts)
-  prompt: "Please summarize the following video content in Traditional Chinese with key points..."
-  # External prompt file (takes precedence over inline prompt)
+  language: "zh-Hant"                # Selects built-in prompt language (en / zh-Hant / ja)
+  # Inline prompt (for simple prompts, overrides built-in prompt)
+  prompt: ""
+  # External prompt file (takes precedence over inline and built-in prompt)
   summary_prompt_file: ""            # e.g., "./prompts/summary-prompt.md"
   max_tokens: 2000
   keywords:
     enabled: true                    # Enable LLM keyword extraction (default: true)
     language: "zh-Hant"              # Keyword language (default: en)
     count: 10                        # Max number of keywords
+  mermaid:
+    enabled: true                    # Enable Mermaid flowchart generation (default: true)
 
 # Channel list
 channels:
@@ -210,12 +213,13 @@ obsidian:
 
 ### Summary Prompt Template
 
-Prompt resolution order:
+Stage 1 prompt resolution order (see "Built-in Prompt Templates" section for details):
 1. Per-channel `summary_prompt_file` (if set)
 2. Global `summary.summary_prompt_file` (if set)
-3. Global `summary.prompt` (inline)
+3. Global `summary.prompt` (inline, if set)
+4. Built-in prompt for `summary.language` (default)
 
-External prompt files support variable substitution using `{{variable}}` syntax:
+External prompt files and built-in prompts support variable substitution using `{{variable}}` syntax:
 
 | Variable | Description |
 |----------|-------------|
@@ -225,26 +229,9 @@ External prompt files support variable substitution using `{{variable}}` syntax:
 | `{{upload_date}}` | Upload date (YYYY-MM-DD) |
 | `{{duration}}` | Video duration |
 | `{{tags}}` | Comma-separated tags |
-| `{{transcript}}` | Full transcript text |
-
-Example prompt file (`prompts/summary-prompt.md`):
-```markdown
-You are a professional video content summarizer.
-
-## Video Info
-- Title: {{title}}
-- Channel: {{channel_name}}
-- Language: {{language}}
-- Date: {{upload_date}}
-
-## Instructions
-1. Write in Traditional Chinese
-2. Include: topic overview (2-3 sentences), key points (5-10 items), conclusion
-3. Preserve technical terms in original language
-
-## Transcript
-{{transcript}}
-```
+| `{{transcript}}` | Full transcription text |
+| `{{transcription_length}}` | Transcription character count |
+| `{{transcription_tier}}` | Size tier (e.g., "< 1,000 字", "1,000-5,000 字") |
 
 For inline `summary.prompt`, the transcript is automatically appended after the prompt text. Variable substitution is not available in inline mode.
 
@@ -288,31 +275,252 @@ Glob for `*__{video_id}__*` pattern in the channel's output directory. If a matc
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Two-Stage LLM Call
+### Three-Stage LLM Call
 
-Summary generation uses two sequential LLM calls:
+Summary generation uses three sequential LLM calls. The input for Stage 1 is the **transcription** (plain text from transcription.md, not the raw SRT subtitle).
 
 ```
 Stage 1: Generate Summary
-    Input:  transcript text (via prompt template)
+    Input:  transcription text (via prompt template)
     Output: summary text (free-form markdown)
     Fail:   skip summary.md entirely, log error
          ↓
 Stage 2: Extract Keywords (if summary.keywords.enabled)
     Input:  summary text from Stage 1
     Prompt: auto-generated based on keywords.language and keywords.count
-            e.g., "請用繁體中文從以下摘要中列出最多 10 個關鍵字，每行一個："
     Output: one keyword per line → parse into list
     Fail:   keywords: [] in frontmatter, flow continues normally
          ↓
+Stage 3: Generate Mermaid Flowchart (if summary.mermaid.enabled)
+    Input:  summary text from Stage 1
+    Prompt: auto-generated, requesting graph TD with simple syntax
+    Output: Mermaid code block
+    Fail:   skip Mermaid section, flow continues normally
+         ↓
 Program assembles final summary.md:
-    frontmatter (metadata + keywords) + summary text from Stage 1
+    frontmatter (metadata + keywords) + Mermaid (if valid) + summary text
 ```
 
-- Stage 2 uses the **same LLM provider** as Stage 1
-- Stage 2 input is the short summary (not the full transcript), so it is fast and cheap
+- All three stages use the **same LLM provider**
+- Stages execute **sequentially** (not parallel, to avoid overloading local LLM)
+- Stage 2 and 3 input is the short summary (not the full transcription), so they are fast
 - Stage 2 failure is non-blocking — `keywords` defaults to `[]`
+- Stage 3 failure is non-blocking — Mermaid section is simply omitted
+- Stage 3 output is validated for Mermaid syntax before inclusion
 - Keyword parsing: split response by newlines, trim whitespace and bullet markers, discard empty lines
+
+### Built-in Prompt Templates
+
+The tool ships with built-in prompt templates in three languages (en, zh-Hant, ja), selected via `summary.language`. Users can override with `summary.prompt` (inline) or `summary.summary_prompt_file` (external file).
+
+Prompt resolution order:
+1. Per-channel `summary_prompt_file` (if set)
+2. Global `summary.summary_prompt_file` (if set)
+3. Global `summary.prompt` (inline, if set)
+4. Built-in prompt for `summary.language` (default)
+
+#### Stage 1 Prompt — Summary (zh-Hant)
+
+File: `prompts/builtin/summary-zh-Hant.md`
+
+```markdown
+你是一位專業的影片內容分析師。請根據以下影片資訊與字幕轉錄內容，產生結構化的摘要。
+
+## 影片資訊
+- 標題：{{title}}
+- 頻道：{{channel_name}}
+- 日期：{{upload_date}}
+- 時長：{{duration}}
+- 標籤：{{tags}}
+- 轉錄字數：{{transcription_length}} 字
+
+## 輸出規模指引
+
+本影片轉錄共 {{transcription_length}} 字。請根據內容豐富程度自行決定各段落的數量和細節，但不得低於以下最低要求：
+
+| 轉錄字數 | 概述最少 | 章節最少 | 每章關鍵細節最少 | 重點最少 |
+|---------|---------|---------|---------------|---------|
+| < 1,000 字 | 2 句 | 2 章 | 2 項 | 3 個 |
+| 1,000-5,000 字 | 4 句 | 3 章 | 2 項 | 5 個 |
+| 5,000-15,000 字 | 4 句 | 4 章 | 3 項 | 7 個 |
+| > 15,000 字 | 6 句 | 5 章 | 3 項 | 10 個 |
+
+本影片屬於「{{transcription_tier}}」級別。以上為最低要求，如內容豐富請自行增加。
+
+## 輸出格式
+
+請嚴格按照以下格式輸出，不要省略任何段落。
+
+### 概述
+用上述最低句數以上簡要說明這部影片的主題、目標觀眾、以及核心結論或主張。
+
+### 章節摘要
+將影片內容按主題轉折分章節。每個章節格式如下：
+
+#### [章節標題]
+- **主要內容**：該段落討論了什麼（2-3 句）
+- **關鍵細節**：具體的數據、案例、或論點（條列式）
+
+如果影片內容是線性敘述（如教學），按時間順序分章節。
+如果影片內容是多主題（如新聞彙整），按主題分章節。
+
+### 重點整理
+列出影片中最重要的要點：
+- 每個要點用一句話概括
+- 優先列出具有實用價值或新穎性的資訊
+- 如果影片包含行動建議（action items），優先列出
+
+## 注意事項
+- 遇到專有名詞、技術名詞、人名、產品名稱時，保留原文並在翻譯旁以括號標注
+  - 例如：大型語言模型（LLM）、注意力機制（Attention Mechanism）
+  - 人名保留原文：伊隆·馬斯克（Elon Musk）
+- 忠實反映影片內容，不加入推測、評論或額外資訊
+- 如果字幕中有明顯的辨識錯誤（如同音異字），請根據上下文修正
+- 使用繁體中文撰寫，語氣保持客觀中立
+
+## 影片字幕轉錄內容
+{{transcript}}
+```
+
+#### Stage 1 Prompt — Summary (en)
+
+File: `prompts/builtin/summary-en.md`
+
+```markdown
+You are a professional video content analyst. Based on the video information and transcription below, produce a structured summary.
+
+## Video Information
+- Title: {{title}}
+- Channel: {{channel_name}}
+- Date: {{upload_date}}
+- Duration: {{duration}}
+- Tags: {{tags}}
+- Transcription length: {{transcription_length}} characters
+
+## Output Scale Guide
+
+This video transcription contains {{transcription_length}} characters. Adjust the detail level based on content richness, but meet these minimum requirements:
+
+| Transcription length | Min overview | Min sections | Min details per section | Min key points |
+|---------------------|-------------|-------------|----------------------|---------------|
+| < 1,000 chars | 2 sentences | 2 sections | 2 items | 3 points |
+| 1,000-5,000 chars | 4 sentences | 3 sections | 2 items | 5 points |
+| 5,000-15,000 chars | 4 sentences | 4 sections | 3 items | 7 points |
+| > 15,000 chars | 6 sentences | 5 sections | 3 items | 10 points |
+
+This video falls in the "{{transcription_tier}}" tier. These are minimums — increase if content warrants it.
+
+## Output Format
+
+Follow this format strictly. Do not skip any section.
+
+### Overview
+Briefly describe the video's topic, target audience, and core conclusion or thesis.
+
+### Section Summary
+Divide the content into sections by topic shift. Each section:
+
+#### [Section Title]
+- **Main content**: What this section discusses (2-3 sentences)
+- **Key details**: Specific data, examples, or arguments (bulleted list)
+
+For linear content (e.g., tutorials), use chronological sections.
+For multi-topic content (e.g., news roundups), use thematic sections.
+
+### Key Takeaways
+List the most important points from the video:
+- One sentence per point
+- Prioritize actionable or novel information
+- List action items first if present
+
+## Guidelines
+- Preserve technical terms, proper nouns, product names, and person names in their original language
+- Faithfully reflect video content — do not add speculation, commentary, or extra information
+- Correct obvious transcription errors (e.g., homophones) based on context
+- Write in English with an objective, neutral tone
+
+## Video Transcription
+{{transcript}}
+```
+
+#### Stage 1 Prompt — Summary (ja)
+
+File: `prompts/builtin/summary-ja.md`
+
+```markdown
+あなたはプロの動画コンテンツアナリストです。以下の動画情報と字幕書き起こし内容に基づき、構造化された要約を作成してください。
+
+## 動画情報
+- タイトル：{{title}}
+- チャンネル：{{channel_name}}
+- 日付：{{upload_date}}
+- 時間：{{duration}}
+- タグ：{{tags}}
+- 書き起こし文字数：{{transcription_length}} 文字
+
+## 出力規模ガイド
+
+本動画の書き起こしは {{transcription_length}} 文字です。内容の豊富さに応じて各セクションの量と詳細度を自由に調整してください。ただし、以下の最低要件を満たすこと：
+
+| 書き起こし文字数 | 概要最低 | セクション最低 | 各セクション詳細最低 | 要点最低 |
+|---------------|---------|-------------|------------------|---------|
+| < 1,000 文字 | 2 文 | 2 セクション | 2 項目 | 3 個 |
+| 1,000-5,000 文字 | 4 文 | 3 セクション | 2 項目 | 5 個 |
+| 5,000-15,000 文字 | 4 文 | 4 セクション | 3 項目 | 7 個 |
+| > 15,000 文字 | 6 文 | 5 セクション | 3 項目 | 10 個 |
+
+本動画は「{{transcription_tier}}」レベルです。上記は最低要件であり、内容が豊富な場合は増やしてください。
+
+## 出力フォーマット
+
+以下のフォーマットに厳密に従ってください。セクションを省略しないでください。
+
+### 概要
+動画のテーマ、対象視聴者、核心的な結論または主張を簡潔に説明してください。
+
+### セクション要約
+内容をテーマの転換点でセクションに分けてください。各セクションの形式：
+
+#### [セクションタイトル]
+- **主な内容**：このセクションで議論されていること（2-3 文）
+- **重要な詳細**：具体的なデータ、事例、論点（箇条書き）
+
+線形的な内容（チュートリアルなど）は時系列で分割。
+複数トピック（ニュースまとめなど）はテーマ別に分割。
+
+### 重要ポイント
+動画で最も重要なポイントをリストアップ：
+- 各ポイントを一文で要約
+- 実用的価値や新規性のある情報を優先
+- アクションアイテムがあれば優先的にリストアップ
+
+## 注意事項
+- 専門用語、固有名詞、人名、製品名は原語を保持し、翻訳の横に括弧で表記
+  - 例：大規模言語モデル（LLM）、アテンション機構（Attention Mechanism）
+  - 人名は原語保持：イーロン・マスク（Elon Musk）
+- 動画内容を忠実に反映し、推測・解説・追加情報を加えない
+- 字幕の明らかな認識エラー（同音異字など）は文脈に基づき修正
+- 日本語で記述し、客観的で中立的なトーンを維持
+
+## 動画字幕書き起こし内容
+{{transcript}}
+```
+
+#### Stage 2 Prompt — Keywords (auto-generated)
+
+Not customizable. The program generates the prompt based on `keywords.language` and `keywords.count`:
+
+- `zh-Hant`: `"請從以下摘要中提取最多 {count} 個關鍵字，每行列出一個關鍵字，不要編號，不要其他說明文字。使用繁體中文，遇到專有名詞保留原文。\n\n{summary}"`
+- `en`: `"Extract up to {count} keywords from the summary below. List one keyword per line. No numbering, no extra text.\n\n{summary}"`
+- `ja`: `"以下の要約から最大 {count} 個のキーワードを抽出してください。1行に1つのキーワードを記載し、番号や説明は不要です。専門用語は原語を保持してください。\n\n{summary}"`
+
+#### Stage 3 Prompt — Mermaid Flowchart (auto-generated)
+
+Not customizable. The program generates the prompt:
+
+- `zh-Hant`: `"請根據以下影片摘要，用 Mermaid 流程圖呈現影片的敘事邏輯或核心概念的關係。\n\n規則：\n- 使用 graph TD（上到下）格式\n- 節點文字用雙引號包裹，例如：A[\"節點文字\"]\n- 只用簡單箭頭 -->\n- 節點數量控制在 5-12 個\n- 只輸出 Mermaid 語法區塊，不要其他說明文字\n\n{summary}"`
+- `en`: `"Based on the video summary below, create a Mermaid flowchart showing the narrative logic or relationships between core concepts.\n\nRules:\n- Use graph TD (top-down) format\n- Wrap node text in double quotes, e.g.: A[\"Node text\"]\n- Use only simple arrows -->\n- Keep nodes between 5-12\n- Output only the Mermaid code block, no other text\n\n{summary}"`
+- `ja`: `"以下の動画要約に基づき、Mermaid フローチャートで動画の論理構成または核心概念の関係を表現してください。\n\nルール：\n- graph TD（上から下）形式を使用\n- ノードテキストはダブルクォートで囲む。例：A[\"ノードテキスト\"]\n- 矢印は --> のみ使用\n- ノード数は 5-12 個に制限\n- Mermaid コードブロックのみ出力、説明文不要\n\n{summary}"`
 
 ### Whisper Transcription Branch
 
@@ -376,7 +584,7 @@ ytss/
 
 ### Key Design Decisions
 
-- **`summarizer` uses an interface** — all LLM backends implement `Summarize(text string, opts SummarizeOptions) (string, error)` where `SummarizeOptions` includes prompt template, max_tokens, and model name. The pipeline is responsible for assembling the final prompt (template + transcript). CLI-based backends (gemini-cli) receive input via stdin pipe to avoid OS argument length limits
+- **`summarizer` uses an interface** — all LLM backends implement `Summarize(text string, opts SummarizeOptions) (string, error)` where `SummarizeOptions` includes prompt template, max_tokens, and model name. The pipeline is responsible for assembling the final prompt (template + transcription) and orchestrating the three-stage LLM call sequence. CLI-based backends (gemini-cli) receive input via stdin pipe to avoid OS argument length limits
 - **`embedded/` handles binary extraction** — checks `~/.ytss/bin/` at startup, extracts from embed if missing or version mismatch. When invoking `yt-dlp`, always pass `--ffmpeg-location <cache_dir>` to use the bundled ffmpeg
 - **`pipeline/` is the single orchestration point** — all three commands call into pipeline, differing only in input source
 
