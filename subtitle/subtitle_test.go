@@ -1,0 +1,94 @@
+package subtitle
+
+import "testing"
+
+func TestSRTToText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name: "basic SRT content",
+			input: `1
+00:00:00,000 --> 00:00:05,000
+Hello world
+
+2
+00:00:05,000 --> 00:00:10,000
+This is a test
+`,
+			expected: "Hello world\nThis is a test",
+		},
+		{
+			name:     "empty input",
+			input:    "",
+			expected: "",
+		},
+		{
+			name: "multi-line subtitle entry",
+			input: `1
+00:00:00,000 --> 00:00:05,000
+Line one
+Line two
+
+2
+00:00:05,000 --> 00:00:10,000
+Another entry
+`,
+			expected: "Line one\nLine two\nAnother entry",
+		},
+		{
+			name: "SRT with extra blank lines",
+			input: `1
+00:00:00,000 --> 00:00:05,000
+Hello world
+
+
+2
+00:00:05,000 --> 00:00:10,000
+This is a test
+
+`,
+			expected: "Hello world\nThis is a test",
+		},
+		{
+			name: "SRT with CRLF line endings",
+			input: "1\r\n00:00:00,000 --> 00:00:05,000\r\nHello world\r\n\r\n2\r\n00:00:05,000 --> 00:00:10,000\r\nThis is a test\r\n",
+			expected: "Hello world\nThis is a test",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SRTToText(tt.input)
+			if got != tt.expected {
+				t.Errorf("SRTToText() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractLangFromFilename(t *testing.T) {
+	tests := []struct {
+		filename string
+		prefix   string
+		expected string
+	}{
+		{"video.ja.srt", "video", "ja"},
+		{"video.en-US.srt", "video", "en-US"},
+		{"video.zh-Hant.srt", "video", "zh-Hant"},
+		{"video.en-orig.srt", "video", "en-orig"},
+		{"video.srt", "video", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.filename, func(t *testing.T) {
+			got := extractLangFromFilename(tt.filename, tt.prefix)
+			if got != tt.expected {
+				t.Errorf("extractLangFromFilename(%q, %q) = %q, want %q",
+					tt.filename, tt.prefix, got, tt.expected)
+			}
+		})
+	}
+}

@@ -6,8 +6,8 @@ dist/
 # Embedded binaries (downloaded per-platform during build)
 embedded/bin/
 
-# Output directory
-output/
+# Runtime output directory (default config value, not the Go package)
+/ytss-output/
 
 # IDE
 .idea/
