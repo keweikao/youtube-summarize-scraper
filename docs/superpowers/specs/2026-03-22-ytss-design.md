@@ -133,7 +133,7 @@ Both `transcription.md` and `summary.md` start with a YAML frontmatter block. Al
 **transcription.md:**
 ```yaml
 ---
-title: "Video Title"
+title: "2026-03-20 Video Title"
 video_id: "dQw4w9WgXcQ"
 url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 channel: "@channel-a"
@@ -148,11 +148,46 @@ processed_at: "2026-03-22T15:30:00+08:00"
 ---
 ```
 
+The `title` field is formatted as `YYYY-MM-DD Video Title` (upload date + original title).
+
 **summary.md** includes two additional fields:
 ```yaml
 llm_provider: "ollama"
 llm_model: "llama3"
 ```
+
+### Obsidian Integration
+
+Optional Obsidian-specific features, disabled by default. When enabled, output files are optimized for use inside an Obsidian vault.
+
+**Config:**
+```yaml
+obsidian:
+  enabled: false
+  auto_tags: ["youtube"]           # Tags automatically appended to frontmatter tags
+  generate_moc: true               # Generate channel MOC (Map of Content) index
+  wikilinks: true                  # Use wikilinks in summary to link transcription
+```
+
+**When `obsidian.enabled: true`:**
+
+1. **Tags enrichment** — `auto_tags` values (e.g., `youtube`) and sanitized channel name are appended to the frontmatter `tags` list
+2. **Wikilinks** — `summary.md` includes a wikilink to the corresponding transcription file:
+   ```markdown
+   > Full transcription: [[2026-03-20__dQw4w9WgXcQ__transcription]]
+   ```
+3. **Channel MOC** — each channel directory gets a `_index.md` with a Dataview query:
+   ```markdown
+   # @channel-a
+
+   ```dataview
+   TABLE upload_date, duration, subtitle_type
+   FROM "YouTube/@channel-a"
+   WHERE video_id != null
+   SORT upload_date DESC
+   ```
+   ```
+   The MOC is regenerated on each `ytss run` to include new videos.
 
 ### Skip Detection
 
