@@ -124,6 +124,35 @@ output/
 - Date: video upload date
 - Sanitized title: special characters and spaces removed, length limited
 - `transcription.md`: subtitle content with SRT formatting stripped, plain text only
+- `summary.md` and `transcription.md` include a YAML frontmatter header with video metadata
+
+### Frontmatter
+
+Both `transcription.md` and `summary.md` start with a YAML frontmatter block. All fields are always present; empty values use `""` for strings and `[]` for lists.
+
+**transcription.md:**
+```yaml
+---
+title: "Video Title"
+video_id: "dQw4w9WgXcQ"
+url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+channel: "@channel-a"
+channel_name: "Channel A"
+upload_date: "2026-03-20"
+duration: "12:34"
+language: "ja"
+tags: ["tag1", "tag2"]
+categories: ["Science & Technology"]
+subtitle_type: "manual"
+processed_at: "2026-03-22T15:30:00+08:00"
+---
+```
+
+**summary.md** includes two additional fields:
+```yaml
+llm_provider: "ollama"
+llm_model: "llama3"
+```
 
 ### Skip Detection
 
