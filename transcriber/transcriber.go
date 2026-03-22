@@ -67,7 +67,7 @@ func (t *Transcriber) Transcribe(videoURL string, language string, outputDir str
 
 	// 5. Run whisper-cli with 30-minute timeout.
 	srtBase := filepath.Join(outputDir, filePrefix+"whisper")
-	if err := t.runWhisper(modelPath, audioPath, srtBase); err != nil {
+	if err := t.runWhisper(modelPath, audioPath, srtBase, normalized); err != nil {
 		return nil, fmt.Errorf("running whisper: %w", err)
 	}
 
@@ -119,12 +119,19 @@ func (t *Transcriber) downloadAudio(videoURL string, outputPath string, cookieAr
 }
 
 // runWhisper executes whisper-cli to transcribe the audio file to SRT.
-func (t *Transcriber) runWhisper(modelPath string, audioPath string, outputBase string) error {
+func (t *Transcriber) runWhisper(modelPath string, audioPath string, outputBase string, language string) error {
 	args := []string{
 		"-m", modelPath,
 		"-f", audioPath,
 		"-osrt",
 		"-of", outputBase,
+	}
+
+	// Pass language hint to whisper for better accuracy.
+	if language != "" {
+		args = append(args, "-l", language)
+	} else {
+		args = append(args, "-l", "auto")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)

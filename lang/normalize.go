@@ -1,6 +1,9 @@
 package lang
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
 
 // specialMappings maps ISO 639-3 and other variant codes to ISO 639-1.
 var specialMappings = map[string]string{
@@ -62,4 +65,53 @@ func NormalizeToISO639_1(code string) string {
 	}
 
 	return code
+}
+
+// DetectLanguageFromText infers a language code from text content by analyzing
+// Unicode character ranges. Returns "zh", "ja", "ko", or "" (unknown).
+// Requires > 30% of non-space characters to be in a specific script to classify.
+func DetectLanguageFromText(text string) string {
+	var cjk, hiragana, katakana, hangul, total int
+
+	for _, r := range text {
+		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsDigit(r) {
+			continue
+		}
+		total++
+
+		switch {
+		case r >= 0x3040 && r <= 0x309F:
+			hiragana++
+		case r >= 0x30A0 && r <= 0x30FF:
+			katakana++
+		case r >= 0xAC00 && r <= 0xD7AF:
+			hangul++
+		case r >= 0x4E00 && r <= 0x9FFF:
+			cjk++
+		}
+	}
+
+	if total == 0 {
+		return ""
+	}
+
+	// Japanese: has hiragana or katakana (unique to Japanese)
+	jpRatio := float64(hiragana+katakana) / float64(total)
+	if jpRatio > 0.1 {
+		return "ja"
+	}
+
+	// Korean: has hangul
+	koRatio := float64(hangul) / float64(total)
+	if koRatio > 0.3 {
+		return "ko"
+	}
+
+	// Chinese: CJK ideographs without Japanese kana
+	zhRatio := float64(cjk) / float64(total)
+	if zhRatio > 0.3 {
+		return "zh"
+	}
+
+	return ""
 }

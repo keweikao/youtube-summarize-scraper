@@ -66,3 +66,29 @@ func TestNormalizeToISO639_1(t *testing.T) {
 		})
 	}
 }
+
+func TestDetectLanguageFromText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"Chinese title", "(现在真出现了)大佬说只有它出现了,美股泡沫才会破裂", "zh"},
+		{"Japanese title", "この動画はテストです。AIの未来について話します", "ja"},
+		{"Japanese mixed with kanji", "機械学習のベストプラクティスを紹介します", "ja"},
+		{"Korean title", "한국어 테스트 영상입니다", "ko"},
+		{"English title", "How to Build a CLI Tool in Go", ""},
+		{"Mixed CJK with English (title+desc)", "A18 Pro MacBook Neo 深度分析 本影片深入探討蘋果最新晶片技術", "zh"},
+		{"Empty", "", ""},
+		{"Numbers only", "12345", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := DetectLanguageFromText(tt.input)
+			if got != tt.expected {
+				t.Errorf("DetectLanguageFromText(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

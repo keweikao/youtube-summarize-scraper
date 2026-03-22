@@ -122,7 +122,7 @@ func DefaultConfig() *Config {
 		DefaultCount: 5,
 		Whisper: WhisperConfig{
 			ModelDir:     "~/.ytss/models",
-			DefaultModel: "base",
+			DefaultModel: "medium",
 			LanguageModels: map[string]string{
 				"ja": "kotoba-ja",
 				"zh": "belle-zh",

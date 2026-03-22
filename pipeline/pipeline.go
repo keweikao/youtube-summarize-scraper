@@ -11,6 +11,7 @@ import (
 	"github.com/kouko/youtube-summarize-scraper/config"
 	"github.com/kouko/youtube-summarize-scraper/embedded"
 	"github.com/kouko/youtube-summarize-scraper/fetcher"
+	"github.com/kouko/youtube-summarize-scraper/lang"
 	"github.com/kouko/youtube-summarize-scraper/output"
 	"github.com/kouko/youtube-summarize-scraper/subtitle"
 	"github.com/kouko/youtube-summarize-scraper/summarizer"
@@ -224,6 +225,12 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 	// 7. Build cookie args.
 	cookieArgs := buildCookieArgs(p.config.Cookie)
 
+	// 7.5. Resolve video language (4-tier fallback).
+	resolvedLang := resolveVideoLanguage(meta)
+	if resolvedLang != "" {
+		slog.Debug("resolved video language", "video_id", meta.ID, "language", resolvedLang)
+	}
+
 	// 8. Attempt subtitle download (4-step cascade).
 	var srtContent string
 	var subLang string
@@ -240,10 +247,10 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 		slog.Info("subtitle download failed, attempting whisper transcription",
 			"video_id", meta.ID, "error", err)
 
-		// 9. Attempt whisper transcription.
+		// 9. Attempt whisper transcription (use resolved language).
 		transResult, transErr := p.transcriber.Transcribe(
 			videoURL(meta.ID),
-			meta.Language,
+			resolvedLang,
 			videoDir,
 			filePrefix,
 			cookieArgs,
@@ -523,6 +530,31 @@ func buildFrontmatterData(
 		SubtitleType: subtitleType,
 		ProcessedAt:  processedAt,
 	}
+}
+
+// resolveVideoLanguage applies a 4-tier fallback to determine the video language:
+//  1. yt-dlp language field
+//  2. First available subtitle language (from preferred languages config)
+//  3. Detect from title + description text (Unicode character analysis)
+//  4. "" (unknown — whisper will auto-detect)
+func resolveVideoLanguage(meta *fetcher.VideoMeta) string {
+	// Tier 1: yt-dlp language field.
+	normalized := lang.NormalizeToISO639_1(meta.Language)
+	if normalized != "" {
+		return normalized
+	}
+
+	// Tier 2: skipped here — subtitle language is resolved during download.
+
+	// Tier 3: detect from title + description.
+	textForDetection := meta.Title + " " + meta.Description
+	if detected := lang.DetectLanguageFromText(textForDetection); detected != "" {
+		slog.Info("language detected from title/description", "language", detected)
+		return detected
+	}
+
+	// Tier 4: unknown.
+	return ""
 }
 
 // insertMermaidAfterFirstHeading inserts a Mermaid code block after the first
