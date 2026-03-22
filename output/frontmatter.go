@@ -28,6 +28,7 @@ type FrontmatterData struct {
 	Keywords    []string
 	LLMProvider string
 	LLMModel    string
+
 }
 
 // BuildTranscriptionFrontmatter generates YAML frontmatter for a transcription

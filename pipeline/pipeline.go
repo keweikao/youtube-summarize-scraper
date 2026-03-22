@@ -273,6 +273,16 @@ func (p *Pipeline) ProcessChannel(channelURL string, count int, channelCfg *conf
 			}
 		} else {
 			stats.Success++
+			// Post-processing: copy_to
+			if channelCfg != nil && channelCfg.CopyTo != nil {
+				channelHandle := deriveChannelHandle(&meta)
+				vDir := output.FindVideoDir(p.config.OutputDir, meta.ID)
+				if vDir == "" {
+					vDir = output.VideoDir(p.config.OutputDir, channelHandle, meta.UploadDate, meta.ID, meta.Title)
+				}
+				fp := output.VideoFilePrefix(meta.UploadDate, meta.ID)
+				p.executeCopyTo(channelCfg.CopyTo, vDir, fp, &meta, channelHandle, "", "")
+			}
 		}
 	}
 
@@ -571,12 +581,6 @@ func (p *Pipeline) runSummarization(
 	summaryPath := filepath.Join(videoDir, filePrefix+"summary.md")
 	summaryContent := summaryFM + "\n" + summaryBody + "\n"
 
-	// Insert wikilink to transcription file if enabled.
-	if p.config.Obsidian.Wikilinks {
-		transcriptionFileName := filePrefix + "transcription"
-		summaryContent = output.InsertWikilink(summaryContent, transcriptionFileName)
-	}
-
 	if err := os.WriteFile(summaryPath, []byte(summaryContent), 0o644); err != nil {
 		return fmt.Errorf("writing summary file: %w", err)
 	}
@@ -729,6 +733,11 @@ func (p *Pipeline) ProcessPlaylist(playlistURL string, count int, playlistCfg *c
 			}
 		} else {
 			stats.Success++
+			// Post-processing: copy_to
+			if playlistCfg != nil && playlistCfg.CopyTo != nil {
+				fp := output.VideoFilePrefix(metaCopy.UploadDate, metaCopy.ID)
+				p.executeCopyTo(playlistCfg.CopyTo, targetDir, fp, &metaCopy, channelHandle, playlistName, playlistID)
+			}
 		}
 	}
 
@@ -1000,17 +1009,28 @@ func (p *Pipeline) runSummarizationPlaylist(
 	summaryPath := filepath.Join(videoDir, filePrefix+"summary.md")
 	summaryContent := summaryFM + "\n" + summaryBody + "\n"
 
-	if p.config.Obsidian.Wikilinks {
-		transcriptionFileName := filePrefix + "transcription"
-		summaryContent = output.InsertWikilink(summaryContent, transcriptionFileName)
-	}
-
 	if err := os.WriteFile(summaryPath, []byte(summaryContent), 0o644); err != nil {
 		return fmt.Errorf("writing summary file: %w", err)
 	}
 
 	slog.Info("summary written", "video_id", meta.ID, "path", summaryPath)
 	return nil
+}
+
+// executeCopyTo runs the copy_to post-processing step for a successfully processed video.
+func (p *Pipeline) executeCopyTo(copyTo *config.CopyToConfig, videoDir, filePrefix string, meta *fetcher.VideoMeta, channelHandle, playlist, playlistID string) {
+	vars := output.CopyToVars{
+		UploadDate:    formatDatePipeline(meta.UploadDate),
+		VideoID:       meta.ID,
+		Title:         meta.Title,
+		ChannelName:   meta.ChannelName,
+		ChannelHandle: channelHandle,
+		PlaylistName:  playlist,
+		PlaylistID:    playlistID,
+	}
+	if err := output.ExecuteCopyTo(*copyTo, videoDir, filePrefix, vars); err != nil {
+		slog.Warn("copy_to failed", "video_id", meta.ID, "error", err)
+	}
 }
 
 // resolveCookieArgs returns cookie args from a per-source CookieConfig pointer.
@@ -1072,6 +1092,7 @@ func playlistToChannelCfg(pl *config.PlaylistConfig) *config.ChannelConfig {
 		Count:             pl.Count,
 		SummaryPromptFile: pl.SummaryPromptFile,
 		Cookie:            pl.Cookie,
+		CopyTo:            pl.CopyTo,
 	}
 }
 
