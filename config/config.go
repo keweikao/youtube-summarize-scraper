@@ -45,6 +45,7 @@ type OllamaConfig struct {
 	Model    string `yaml:"model"`
 	Endpoint string `yaml:"endpoint"`
 	Think    *bool  `yaml:"think,omitempty"`
+	Timeout  int    `yaml:"timeout"` // Seconds per LLM request (default: 900)
 }
 
 type LlamaCppConfig struct {
@@ -145,6 +146,7 @@ func DefaultConfig() *Config {
 				Model:    "llama3",
 				Endpoint: "http://localhost:11434",
 				Think:    ptrBool(false),
+				Timeout:  900,
 			},
 			LlamaCpp: LlamaCppConfig{
 				Endpoint: "http://localhost:8080",

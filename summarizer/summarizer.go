@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/kouko/youtube-summarize-scraper/config"
 )
@@ -24,10 +25,15 @@ type Summarizer interface {
 func NewSummarizer(cfg config.LLMConfig) (Summarizer, error) {
 	switch cfg.Provider {
 	case "ollama":
+		timeout := time.Duration(cfg.Ollama.Timeout) * time.Second
+		if timeout == 0 {
+			timeout = 15 * time.Minute
+		}
 		return &OllamaSummarizer{
 			endpoint: cfg.Ollama.Endpoint,
 			model:    cfg.Ollama.Model,
 			think:    cfg.Ollama.Think,
+			timeout:  timeout,
 		}, nil
 	case "llamacpp":
 		return &LlamaCppSummarizer{

@@ -50,6 +50,7 @@ llm:
     model: "llama3"
     endpoint: "http://localhost:11434"
     think: false                       # Set true to enable thinking mode (better quality, slower, uses 4x tokens)
+    timeout: 900                       # Seconds per LLM request (default: 900 = 15 min)
   llamacpp:
     endpoint: "http://localhost:8080"
   claude_api:

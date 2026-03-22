@@ -15,6 +15,7 @@ type OllamaSummarizer struct {
 	endpoint string
 	model    string
 	think    *bool
+	timeout  time.Duration
 }
 
 type ollamaRequest struct {
@@ -63,7 +64,11 @@ func (o *OllamaSummarizer) Summarize(text string, opts SummarizeOptions) (string
 		return "", fmt.Errorf("ollama: marshal request: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	timeout := o.timeout
+	if timeout == 0 {
+		timeout = 15 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	url := o.endpoint + "/api/generate"
