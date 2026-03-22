@@ -57,6 +57,45 @@ This is a test
 			input: "1\r\n00:00:00,000 --> 00:00:05,000\r\nHello world\r\n\r\n2\r\n00:00:05,000 --> 00:00:10,000\r\nThis is a test\r\n",
 			expected: "Hello world\nThis is a test",
 		},
+		{
+			name: "YouTube rolling auto-subtitle dedup",
+			input: `1
+00:00:00,160 --> 00:00:02,070
+
+Superpowers plugin for Claude Code is
+
+2
+00:00:02,070 --> 00:00:02,080
+Superpowers plugin for Claude Code is
+
+
+3
+00:00:02,080 --> 00:00:03,669
+Superpowers plugin for Claude Code is
+getting a lot of hype right now. But
+
+4
+00:00:03,669 --> 00:00:03,679
+getting a lot of hype right now. But
+
+
+5
+00:00:03,679 --> 00:00:05,269
+getting a lot of hype right now. But
+does it actually make a difference? In
+
+6
+00:00:05,269 --> 00:00:05,279
+does it actually make a difference? In
+
+
+7
+00:00:05,279 --> 00:00:06,470
+does it actually make a difference? In
+this video, I'm going to build the same
+`,
+			expected: "Superpowers plugin for Claude Code is\ngetting a lot of hype right now. But\ndoes it actually make a difference? In\nthis video, I'm going to build the same",
+		},
 	}
 
 	for _, tt := range tests {

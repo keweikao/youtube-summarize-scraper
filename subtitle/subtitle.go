@@ -162,12 +162,14 @@ var srtTimestampLine = regexp.MustCompile(`^\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2
 // srtSequenceNumber matches SRT sequence numbers (standalone digits on a line)
 var srtSequenceNumber = regexp.MustCompile(`^\d+$`)
 
-// SRTToText strips SRT formatting and returns plain text.
-// It removes sequence numbers, timestamps, and blank lines, keeping only subtitle text.
+// SRTToText strips SRT formatting and returns deduplicated plain text.
+// It removes sequence numbers, timestamps, and blank lines, then deduplicates
+// consecutive identical lines caused by YouTube's rolling auto-subtitle format.
 func SRTToText(srtContent string) string {
 	lines := strings.Split(srtContent, "\n")
 	var textLines []string
 
+	// Extract text lines, skipping SRT metadata.
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -182,5 +184,16 @@ func SRTToText(srtContent string) string {
 		textLines = append(textLines, trimmed)
 	}
 
-	return strings.Join(textLines, "\n")
+	// Deduplicate consecutive identical lines.
+	// YouTube auto-subs produce rolling blocks where each line appears 2-3 times.
+	var deduped []string
+	prevLine := ""
+	for _, line := range textLines {
+		if line != prevLine {
+			deduped = append(deduped, line)
+			prevLine = line
+		}
+	}
+
+	return strings.Join(deduped, "\n")
 }
