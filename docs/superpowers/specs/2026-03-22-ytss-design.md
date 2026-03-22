@@ -222,7 +222,7 @@ ytss/
 ### Key Design Decisions
 
 - **`summarizer` uses an interface** — all LLM backends implement `Summarize(text string, opts SummarizeOptions) (string, error)` where `SummarizeOptions` includes prompt template, max_tokens, and model name. The pipeline is responsible for assembling the final prompt (template + transcript). CLI-based backends (gemini-cli) receive input via stdin pipe to avoid OS argument length limits
-- **`embedded/` handles binary extraction** — checks `~/.ytss/bin/` at startup, extracts from embed if missing or version mismatch
+- **`embedded/` handles binary extraction** — checks `~/.ytss/bin/` at startup, extracts from embed if missing or version mismatch. When invoking `yt-dlp`, always pass `--ffmpeg-location <cache_dir>` to use the bundled ffmpeg
 - **`pipeline/` is the single orchestration point** — all three commands call into pipeline, differing only in input source
 
 ## External Dependencies
@@ -232,6 +232,7 @@ ytss/
 | Tool | Source | Embed Strategy |
 |------|--------|---------------|
 | `yt-dlp` | GitHub Release (platform-specific binary) | `go:embed` |
+| `ffmpeg` | GitHub Release (static build, e.g., [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) or [BtbN builds](https://github.com/BtbN/FFmpeg-Builds)) | `go:embed` |
 | `whisper.cpp` | GitHub Release, `whisper-cli` binary (pin specific release tag) | `go:embed` |
 
 ### Build Process
@@ -249,12 +250,15 @@ Directory layout for embedded binaries:
 embedded/bin/
 ├── darwin-arm64/
 │   ├── yt-dlp
+│   ├── ffmpeg
 │   └── whisper-cli
 ├── darwin-amd64/
 │   ├── yt-dlp
+│   ├── ffmpeg
 │   └── whisper-cli
 └── linux-amd64/
     ├── yt-dlp
+    ├── ffmpeg
     └── whisper-cli
 ```
 
