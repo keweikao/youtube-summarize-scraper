@@ -3,6 +3,7 @@ package output
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kouko/youtube-summarize-scraper/config"
@@ -221,5 +222,182 @@ func TestExecuteCopyTo_CustomFilename(t *testing.T) {
 	expectedPath := filepath.Join(targetPath, expectedName)
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("expected file %s to exist", expectedPath)
+	}
+}
+
+func TestNormalizeCopyToVars(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      CopyToVars
+		wantDate   string
+		wantTitle  string
+	}{
+		{
+			name: "all fields present",
+			input: CopyToVars{
+				UploadDate: "2024-01-15",
+				VideoID:    "abc123",
+				Title:      "My Video",
+			},
+			wantDate:  "2024-01-15",
+			wantTitle: "My Video",
+		},
+		{
+			name: "empty upload_date falls back to unknown-date",
+			input: CopyToVars{
+				UploadDate: "",
+				VideoID:    "abc123",
+				Title:      "My Video",
+			},
+			wantDate:  "unknown-date",
+			wantTitle: "My Video",
+		},
+		{
+			name: "empty title falls back to video_id",
+			input: CopyToVars{
+				UploadDate: "2024-01-15",
+				VideoID:    "abc123",
+				Title:      "",
+			},
+			wantDate:  "2024-01-15",
+			wantTitle: "abc123",
+		},
+		{
+			name: "both empty",
+			input: CopyToVars{
+				UploadDate: "",
+				VideoID:    "abc123",
+				Title:      "",
+			},
+			wantDate:  "unknown-date",
+			wantTitle: "abc123",
+		},
+		{
+			name: "empty title and empty video_id",
+			input: CopyToVars{
+				UploadDate: "2024-01-15",
+				VideoID:    "",
+				Title:      "",
+			},
+			wantDate:  "2024-01-15",
+			wantTitle: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeCopyToVars(tt.input)
+			if got.UploadDate != tt.wantDate {
+				t.Errorf("UploadDate = %q, want %q", got.UploadDate, tt.wantDate)
+			}
+			if got.Title != tt.wantTitle {
+				t.Errorf("Title = %q, want %q", got.Title, tt.wantTitle)
+			}
+		})
+	}
+}
+
+func TestExecuteCopyTo_EmptyMetadata(t *testing.T) {
+	srcDir := t.TempDir()
+	prefix := "__abc123__"
+	os.WriteFile(filepath.Join(srcDir, prefix+"summary.md"), []byte("summary"), 0o644)
+
+	dstBase := t.TempDir()
+	targetPath := filepath.Join(dstBase, "target")
+
+	cfg := config.CopyToConfig{
+		Path:     targetPath,
+		Files:    []string{"summary"},
+		Filename: "{upload_date}_{title}_{type}.md",
+	}
+
+	// Empty UploadDate and Title — normalization should produce valid filename.
+	vars := CopyToVars{
+		UploadDate: "",
+		VideoID:    "abc123",
+		Title:      "",
+	}
+
+	err := ExecuteCopyTo(cfg, srcDir, prefix, vars)
+	if err != nil {
+		t.Fatalf("ExecuteCopyTo() error = %v", err)
+	}
+
+	expectedName := "unknown-date_abc123_summary.md"
+	expectedPath := filepath.Join(targetPath, expectedName)
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Errorf("expected file %s to exist", expectedPath)
+	}
+}
+
+func TestResolveTemplate_LongTitle(t *testing.T) {
+	// Title that would produce a filename > 255 bytes.
+	longTitle := strings.Repeat("あ", 200) // 200 CJK chars = 600 bytes
+	vars := CopyToVars{
+		UploadDate: "2024-01-15",
+		VideoID:    "abc123",
+		Title:      longTitle,
+	}
+	result := resolveTemplate("{upload_date}_{title}_{type}.md", vars, "summary")
+
+	if len(result) > maxSegmentBytes {
+		t.Errorf("result length %d bytes exceeds %d", len(result), maxSegmentBytes)
+	}
+	// Must preserve extension.
+	if !strings.HasSuffix(result, ".md") {
+		t.Errorf("result %q should end with .md", result)
+	}
+	// Must still start with the date prefix.
+	if !strings.HasPrefix(result, "2024-01-15_") {
+		t.Errorf("result %q should start with date prefix", result)
+	}
+}
+
+func TestResolveTemplate_LongMultipleFields(t *testing.T) {
+	// All three shrinkable fields are long.
+	vars := CopyToVars{
+		UploadDate:    "2024-01-15",
+		VideoID:       "abc123",
+		Title:         strings.Repeat("T", 80),
+		ChannelName:   strings.Repeat("C", 80),
+		ChannelHandle: "ch",
+		PlaylistName:  strings.Repeat("P", 80),
+		PlaylistID:    "PLxyz",
+	}
+	result := resolveTemplate("{channel_name}_{playlist_name}_{title}_{type}.md", vars, "summary")
+
+	if len(result) > maxSegmentBytes {
+		t.Errorf("result length %d bytes exceeds %d: %q", len(result), maxSegmentBytes, result)
+	}
+	if !strings.HasSuffix(result, ".md") {
+		t.Errorf("result %q should end with .md", result)
+	}
+}
+
+func TestResolveTemplate_FallbackTruncate(t *testing.T) {
+	// Even after progressive shortening, segment is still too long.
+	// Use a very long video_id (not shrinkable) plus long title.
+	vars := CopyToVars{
+		UploadDate: "2024-01-15",
+		VideoID:    strings.Repeat("V", 200),
+		Title:      strings.Repeat("T", 80),
+	}
+	result := resolveTemplate("{video_id}_{title}_{type}.md", vars, "summary")
+
+	if len(result) > maxSegmentBytes {
+		t.Errorf("result length %d bytes exceeds %d", len(result), maxSegmentBytes)
+	}
+	if !strings.HasSuffix(result, ".md") {
+		t.Errorf("result %q should end with .md", result)
+	}
+}
+
+func TestResolveTemplate_NormalNotAffected(t *testing.T) {
+	vars := testVars()
+	// Same as existing test — ensure normal-length results are unchanged.
+	result := resolveTemplate("{upload_date}_{title}_{type}.md", vars, "summary")
+	want := "2024-01-15_My_Test_Video_summary.md"
+	if result != want {
+		t.Errorf("resolveTemplate() = %q, want %q", result, want)
 	}
 }
