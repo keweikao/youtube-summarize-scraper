@@ -437,6 +437,12 @@ func (p *Pipeline) ProcessVideo(meta *fetcher.VideoMeta, channelCfg *config.Chan
 		}
 	}
 
+	// Record in ledger for future skip detection.
+	channelDir := filepath.Dir(videoDir)
+	if err := output.RecordProcessed(channelDir, meta.ID, filepath.Base(videoDir), time.Now().Format(time.RFC3339)); err != nil {
+		slog.Warn("failed to update ledger", "video_id", meta.ID, "error", err)
+	}
+
 	slog.Info("video processing complete", "video_id", meta.ID, "output_dir", videoDir)
 	return nil
 }
@@ -852,6 +858,12 @@ func (p *Pipeline) processVideoInPlaylist(
 			slog.Warn("summarization failed, transcription still produced",
 				"video_id", meta.ID, "error", err)
 		}
+	}
+
+	// Record in ledger for future skip detection.
+	plDir := filepath.Dir(videoDir)
+	if err := output.RecordProcessed(plDir, meta.ID, filepath.Base(videoDir), time.Now().Format(time.RFC3339)); err != nil {
+		slog.Warn("failed to update ledger", "video_id", meta.ID, "error", err)
 	}
 
 	slog.Info("video processing complete", "video_id", meta.ID, "output_dir", videoDir)

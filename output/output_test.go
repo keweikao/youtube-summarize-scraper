@@ -117,6 +117,7 @@ func TestVideoFilePrefix_ShortDate(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIsProcessed_Found(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	channelDir := filepath.Join(tmp, "@testchannel")
 	videoDir := filepath.Join(channelDir, "2024-03-15__abc123__some_title")
@@ -138,6 +139,7 @@ func TestIsProcessed_Found(t *testing.T) {
 }
 
 func TestIsProcessed_PartialNoSummary(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	channelDir := filepath.Join(tmp, "@testchannel")
 	videoDir := filepath.Join(channelDir, "2024-03-15__abc123__some_title")
@@ -159,6 +161,7 @@ func TestIsProcessed_PartialNoSummary(t *testing.T) {
 }
 
 func TestIsProcessed_NotFound(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	channelDir := filepath.Join(tmp, "@testchannel")
 	if err := os.MkdirAll(channelDir, 0o755); err != nil {
@@ -175,6 +178,7 @@ func TestIsProcessed_NotFound(t *testing.T) {
 }
 
 func TestIsProcessed_NoChannelDir(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 
 	found, err := IsProcessed(tmp, "nope", "vid1")
@@ -297,6 +301,7 @@ func TestBuildSummaryFrontmatter(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestIsProcessedGlobal_Found(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	videoDir := filepath.Join(tmp, "@somechannel", "2024-03-15__vid1__some_title")
 	if err := os.MkdirAll(videoDir, 0o755); err != nil {
@@ -316,6 +321,7 @@ func TestIsProcessedGlobal_Found(t *testing.T) {
 }
 
 func TestIsProcessedGlobal_PartialNoSummary(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	videoDir := filepath.Join(tmp, "@somechannel", "2024-03-15__vid2__some_title")
 	if err := os.MkdirAll(videoDir, 0o755); err != nil {
@@ -335,6 +341,7 @@ func TestIsProcessedGlobal_PartialNoSummary(t *testing.T) {
 }
 
 func TestIsProcessedGlobal_NotFound(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "@somechannel"), 0o755); err != nil {
 		t.Fatal(err)
@@ -354,6 +361,7 @@ func TestIsProcessedGlobal_NotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFindVideoDir_Found(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	videoDir := filepath.Join(tmp, "@ch", "2024-01-01__findme__my_title")
 	if err := os.MkdirAll(videoDir, 0o755); err != nil {
@@ -367,6 +375,7 @@ func TestFindVideoDir_Found(t *testing.T) {
 }
 
 func TestFindVideoDir_NotFound(t *testing.T) {
+	ClearLedgerCache()
 	tmp := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(tmp, "@ch"), 0o755); err != nil {
 		t.Fatal(err)

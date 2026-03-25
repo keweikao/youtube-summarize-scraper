@@ -1,13 +1,153 @@
 package output
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode"
 )
+
+// ledgerFile is the name of the JSON ledger stored in each channel/playlist directory.
+const ledgerFile = ".ytss-processed.json"
+
+// LedgerEntry records a processed video's location.
+type LedgerEntry struct {
+	Dir         string `json:"dir"`
+	ProcessedAt string `json:"processed_at,omitempty"`
+}
+
+// Ledger maps videoID → LedgerEntry. One ledger per channel directory.
+type Ledger map[string]LedgerEntry
+
+// ledgerCache avoids re-reading the same ledger file within a single run.
+var (
+	ledgerCache   = map[string]Ledger{}
+	ledgerCacheMu sync.Mutex
+)
+
+// ClearLedgerCache resets the in-memory ledger cache. Used in tests.
+func ClearLedgerCache() {
+	ledgerCacheMu.Lock()
+	defer ledgerCacheMu.Unlock()
+	ledgerCache = map[string]Ledger{}
+}
+
+// ReadLedger loads the ledger from a channel/playlist directory.
+// Returns an empty Ledger (not nil) if the file doesn't exist.
+func ReadLedger(channelDir string) Ledger {
+	ledgerCacheMu.Lock()
+	defer ledgerCacheMu.Unlock()
+
+	if cached, ok := ledgerCache[channelDir]; ok {
+		return cached
+	}
+
+	ledger := Ledger{}
+	data, err := os.ReadFile(filepath.Join(channelDir, ledgerFile))
+	if err == nil {
+		_ = json.Unmarshal(data, &ledger)
+	}
+	ledgerCache[channelDir] = ledger
+	return ledger
+}
+
+// WriteLedger persists the ledger to disk and updates the cache.
+func WriteLedger(channelDir string, ledger Ledger) error {
+	ledgerCacheMu.Lock()
+	defer ledgerCacheMu.Unlock()
+
+	data, err := json.MarshalIndent(ledger, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling ledger: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(channelDir, ledgerFile), data, 0o644); err != nil {
+		return fmt.Errorf("writing ledger: %w", err)
+	}
+	ledgerCache[channelDir] = ledger
+	return nil
+}
+
+// RecordProcessed adds a video to the channel's ledger.
+func RecordProcessed(channelDir, videoID, videoSubDir, processedAt string) error {
+	ledger := ReadLedger(channelDir)
+	ledger[videoID] = LedgerEntry{Dir: videoSubDir, ProcessedAt: processedAt}
+	return WriteLedger(channelDir, ledger)
+}
+
+// reVideoIDInDirName extracts a video ID from a directory name formatted as
+// "YYYY-MM-DD__videoID__title" (legacy naming convention).
+var reVideoIDInDirName = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}__([^_]+)__`)
+
+// rebuildLedgerFromFrontmatter scans all subdirectories for summary.md files,
+// reads the video_id from YAML frontmatter, and rebuilds the ledger.
+// Falls back to extracting video ID from directory name (legacy format).
+func rebuildLedgerFromFrontmatter(channelDir string) Ledger {
+	ledger := Ledger{}
+	entries, err := os.ReadDir(channelDir)
+	if err != nil {
+		return ledger
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		subDir := entry.Name()
+		// Look for any summary.md file in the subdirectory.
+		matches, _ := filepath.Glob(filepath.Join(channelDir, subDir, "*summary.md"))
+		if len(matches) == 0 {
+			continue
+		}
+		// Try 1: Read video_id from frontmatter.
+		videoID := extractVideoIDFromFrontmatter(matches[0])
+		// Try 2: Extract from directory name (legacy: YYYY-MM-DD__videoID__title).
+		if videoID == "" {
+			if m := reVideoIDInDirName.FindStringSubmatch(subDir); len(m) > 1 {
+				videoID = m[1]
+			}
+		}
+		if videoID != "" {
+			ledger[videoID] = LedgerEntry{Dir: subDir}
+		}
+	}
+	// Persist the rebuilt ledger.
+	_ = WriteLedger(channelDir, ledger)
+	return ledger
+}
+
+// extractVideoIDFromFrontmatter reads the video_id field from a markdown file's
+// YAML frontmatter (between --- delimiters).
+func extractVideoIDFromFrontmatter(filePath string) string {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	inFrontmatter := false
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "---" {
+			if inFrontmatter {
+				return "" // end of frontmatter, not found
+			}
+			inFrontmatter = true
+			continue
+		}
+		if inFrontmatter && strings.HasPrefix(line, "video_id:") {
+			val := strings.TrimPrefix(line, "video_id:")
+			val = strings.TrimSpace(val)
+			val = strings.Trim(val, "\"")
+			return val
+		}
+	}
+	return ""
+}
 
 // reUnsafe matches characters that are not alphanumeric, CJK, or underscores.
 var reUnsafe = regexp.MustCompile(`[^\p{L}\p{N}_\s]`)
@@ -79,32 +219,80 @@ func VideoFilePrefix(uploadDate, videoID string) string {
 	return fmt.Sprintf("%s__%s__", formatDate(uploadDate), videoID)
 }
 
-// IsProcessed checks whether a video is fully processed (has summary.md)
-// inside the channel directory.
+// IsProcessed checks whether a video is fully processed by consulting the
+// channel ledger first, then falling back to frontmatter scan if the ledger
+// is empty or missing.
 func IsProcessed(outputDir, channelHandle, videoID string) (bool, error) {
 	channelDir := filepath.Join(outputDir, "@"+channelHandle)
-	pattern := filepath.Join(channelDir, fmt.Sprintf("*__%s__*", videoID), "*__summary.md")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return false, fmt.Errorf("glob pattern error: %w", err)
+	ledger := ReadLedger(channelDir)
+
+	// If ledger is empty, attempt rebuild from existing frontmatter.
+	if len(ledger) == 0 {
+		ledger = rebuildLedgerFromFrontmatter(channelDir)
 	}
-	return len(matches) > 0, nil
+
+	if entry, ok := ledger[videoID]; ok {
+		// Verify the directory still exists.
+		dir := filepath.Join(channelDir, entry.Dir)
+		if _, err := os.Stat(dir); err == nil {
+			return true, nil
+		}
+		// Directory gone — remove stale entry.
+		delete(ledger, videoID)
+		_ = WriteLedger(channelDir, ledger)
+	}
+
+	return false, nil
 }
 
-// IsProcessedGlobal checks whether a video is fully processed (has summary.md)
-// in any channel directory. Used when channel handle is unknown (flat-playlist).
+// IsProcessedGlobal checks whether a video is fully processed in any
+// channel/playlist directory under outputDir.
 func IsProcessedGlobal(outputDir, videoID string) (bool, error) {
-	pattern := filepath.Join(outputDir, "*", fmt.Sprintf("*__%s__*", videoID), "*__summary.md")
-	matches, err := filepath.Glob(pattern)
+	entries, err := os.ReadDir(outputDir)
 	if err != nil {
-		return false, fmt.Errorf("glob pattern error: %w", err)
+		return false, nil
 	}
-	return len(matches) > 0, nil
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		subDir := filepath.Join(outputDir, entry.Name())
+		ledger := ReadLedger(subDir)
+		if len(ledger) == 0 {
+			ledger = rebuildLedgerFromFrontmatter(subDir)
+		}
+		if _, ok := ledger[videoID]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // FindVideoDir returns the existing video directory path for a given video ID
-// by searching across all channel directories. Returns "" if not found.
+// by searching ledgers across all channel directories, then falling back to
+// glob matching on legacy directory names.
 func FindVideoDir(outputDir, videoID string) string {
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		channelDir := filepath.Join(outputDir, entry.Name())
+		ledger := ReadLedger(channelDir)
+		if len(ledger) == 0 {
+			ledger = rebuildLedgerFromFrontmatter(channelDir)
+		}
+		if le, ok := ledger[videoID]; ok {
+			dir := filepath.Join(channelDir, le.Dir)
+			if _, err := os.Stat(dir); err == nil {
+				return dir
+			}
+		}
+	}
+	// Fallback: glob for legacy directory naming (YYYY-MM-DD__videoID__*).
 	pattern := filepath.Join(outputDir, "*", fmt.Sprintf("*__%s__*", videoID))
 	matches, _ := filepath.Glob(pattern)
 	if len(matches) > 0 {
