@@ -1,6 +1,6 @@
 # youtube-summarize-scraper (YTSS) — 專案指令
 
-> Go CLI,批次處理 YouTube 頻道:抓字幕 → 失敗則 whisper.cpp 轉錄 → 3-stage LLM 摘要(摘要 + 關鍵字 + Mermaid 流程圖)→ 寫成 markdown 進 Obsidian vault。每日 launchd cron 09:00 處理 9 個頻道 → `stephen_second_brain/learning/videos/`。這是 memory 裡的「YTSS 自動化」本體。
+> Go CLI,批次處理 YouTube 頻道:抓字幕 → 失敗則 whisper.cpp 轉錄 → 3-stage LLM 摘要(摘要 + 關鍵字 + Mermaid 流程圖)→ 寫成 markdown 進 Obsidian vault。每日 launchd cron 09:00 處理 config.yaml 內的頻道清單(2026-07-26 起共 11 個) → `stephen_second_brain/learning/videos/`。這是 memory 裡的「YTSS 自動化」本體。
 
 ## Stack
 
@@ -37,7 +37,7 @@ go test ./... -count=1   # 60+ tests(fetcher/lang/output/subtitle/summarizer)
 - **ffmpeg 從源碼編**(需 cmake/nasm/pkg-config);whisper 模型首次 on-demand 下載(~1.4-1.5GB)到 `~/.ytss/models/`。
 - 受限影片支援 browser cookie 自動擷取,fallback `cookie.txt`(Netscape)。
 - 語言要明寫 `zh-Hant,zh-Hans`(逗號=yt-dlp 優先序),不要裸 `zh`。
-- 已知:config 中 `JayShettyPodcast` 頻道 404/改名;9 頻道常有 2 個 fail(下次 cron retry)。
+- 已知:每輪常有 1-2 個頻道 fail(下次 cron retry);失效頻道要從 config 移除(前例:`JayShettyPodcast` 404/改名)。
 - 相關但分離:`monkey-knowledge-youtube-skills`(平行的 YouTube skill set,補充用);**YTSS 是 production 主力**。memory 的「mk-youtube ffmpeg 缺口」是指那個 skill,不是本 CLI(本 CLI 自帶 embedded ffmpeg)。
 
 ## CI / Verifier
